@@ -22,6 +22,7 @@ create table public.products (
 create unique index products_serial_unique on public.products (lower(btrim(serial)));
 create table public.customers (
  id uuid primary key,
+ code_generated boolean not null default false,
  code text not null check (length(btrim(code)) between 1 and 200),
  name text not null check (length(btrim(name)) between 1 and 200),
  address text not null default '' check(length(address)<=200),
@@ -85,7 +86,7 @@ declare member_role text;
 begin
  member_role:=public.flow_role();
  if member_role is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
- return jsonb_build_object('serial_auto',true,'serial_manual',true,'role',member_role,'data',jsonb_build_object(
+ return jsonb_build_object('serial_auto',true,'serial_manual',true,'customer_code_auto',true,'role',member_role,'data',jsonb_build_object(
   'products',coalesce((select jsonb_agg(to_jsonb(p) order by p.serial) from public.products p),'[]'::jsonb),
   'customers',coalesce((select jsonb_agg(to_jsonb(c) order by c.name) from public.customers c),'[]'::jsonb),
   'shipments',coalesce((select jsonb_agg(to_jsonb(s) order by s.date desc,s.id) from public.shipments s),'[]'::jsonb),
@@ -100,7 +101,7 @@ language plpgsql security definer set search_path = pg_catalog,public
 as $$
 declare
  record_id uuid; current_version integer; col_list text; assignments text; payload jsonb;
- existing_product uuid; prod public.products;
+ existing_product uuid; prod public.products; cust public.customers;
 begin
  if public.flow_role() is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
  if p_table not in ('products','customers','shipments','service') or p_table is null then raise exception 'INVALID_TABLE'; end if;
@@ -124,6 +125,17 @@ begin
    payload:=payload||jsonb_build_object('serial',prod.serial,'serial_generated',prod.serial_generated);
   end if;
   if payload->>'category'='' or not payload?'category' then payload:=payload||jsonb_build_object('category',case when current_version is null then null else prod.category end); end if;
+ end if;
+ if p_table='customers' then
+  if current_version is null then
+   if coalesce(p_record->>'customer_code_mode','manual') not in ('auto','manual') then raise exception 'INVALID_CUSTOMER_CODE_MODE'; end if;
+   payload:=payload||jsonb_build_object('code',case when p_record->>'customer_code_mode'='auto' then '' else btrim(coalesce(p_record->>'code','')) end,'code_generated',p_record->>'customer_code_mode'='auto');
+   -- SQL NULL must not leave the mode flag unset for older clients.
+   payload:=payload||jsonb_build_object('code_generated',coalesce(p_record->>'customer_code_mode','manual')='auto');
+  else
+   select * into cust from public.customers where id=record_id;
+   payload:=payload||jsonb_build_object('code',cust.code,'code_generated',cust.code_generated);
+  end if;
  end if;
  if p_table='service' and payload->>'completed'='' then payload:=payload||'{"completed":null}'::jsonb; end if;
  if p_table='shipments' then
@@ -221,5 +233,46 @@ end $$;
 revoke all on function public.flow_product_serial() from public,anon,authenticated;
 drop trigger if exists flow_product_serial_trigger on public.products;
 create trigger flow_product_serial_trigger before insert or update on public.products for each row execute function public.flow_product_serial();
+
+create table if not exists public.flow_customer_counter (
+ id integer primary key check(id=1),
+ last_number numeric(100,0) not null default 0 check(last_number>=0)
+);
+alter table public.flow_customer_counter enable row level security;
+revoke all on public.flow_customer_counter from public,anon,authenticated;
+insert into public.flow_customer_counter(id,last_number)
+select 1,coalesce(max(substring(code from 2)::numeric),0) from public.customers where upper(code) ~ '^C[0-9]+$'
+on conflict(id) do update set last_number=greatest(flow_customer_counter.last_number,excluded.last_number);
+
+create or replace function public.flow_customer_code() returns trigger
+language plpgsql security definer set search_path=pg_catalog,public
+as $$
+declare seq numeric(100,0); generated text;
+begin
+ if TG_OP='UPDATE' then
+  if new.code is distinct from old.code then raise exception 'CUSTOMER_CODE_IMMUTABLE'; end if;
+  new.code_generated:=old.code_generated;
+  return new;
+ end if;
+ if not new.code_generated then
+  new.code:=btrim(new.code);
+  if new.code is null or new.code='' then raise exception 'MANUAL_CUSTOMER_CODE_REQUIRED'; end if;
+  if upper(new.code) ~ '^C[0-9]+$' then
+   update public.flow_customer_counter set last_number=greatest(last_number,substring(new.code from 2)::numeric) where id=1;
+  end if;
+  return new;
+ end if;
+ loop
+  update public.flow_customer_counter set last_number=last_number+1 where id=1 returning last_number into seq;
+  if seq is null then raise exception 'CUSTOMER_COUNTER_MISSING'; end if;
+  generated:='C'||lpad(seq::text,greatest(4,length(seq::text)),'0');
+  exit when not exists(select 1 from public.customers where lower(code)=lower(generated));
+ end loop;
+ new.code:=generated;
+ return new;
+end $$;
+revoke all on function public.flow_customer_code() from public,anon,authenticated;
+drop trigger if exists flow_customer_code_trigger on public.customers;
+create trigger flow_customer_code_trigger before insert or update on public.customers for each row execute function public.flow_customer_code();
 
 commit;

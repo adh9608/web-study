@@ -48,6 +48,12 @@ window.FlowCloud = (() => {
   }
   function message(error, status) {
     const m = error?.message || error?.msg || error?.error_description || "";
+    if (m.includes("MANUAL_CUSTOMER_CODE_REQUIRED"))
+      return "수기로 입력할 고객코드를 작성해 주세요.";
+    if (m.includes("CUSTOMER_CODE_IMMUTABLE"))
+      return "등록된 고객코드는 변경할 수 없습니다.";
+    if (m.includes("INVALID_CUSTOMER_CODE_MODE"))
+      return "고객코드 입력 방식을 선택해 주세요.";
     if (m.includes("MANUAL_SERIAL_REQUIRED"))
       return "수기로 입력할 시리얼번호를 작성해 주세요.";
     if (m.includes("SERIAL_CATEGORY_MISMATCH"))

@@ -128,6 +128,8 @@ const { chromium } = require("playwright");
   }
   async function add(p, fields) {
     await p.locator("#add-button").click();
+    if (fields.code && (await p.locator("#customer-code-mode").count()))
+      await p.locator("#customer-code-mode").selectOption("manual");
     for (const [key, value] of Object.entries(fields)) {
       const el = p.locator('[name="' + key + '"]');
       if (await el.evaluate((e) => e.tagName === "SELECT"))
@@ -346,6 +348,19 @@ const { chromium } = require("playwright");
   await mp.getByRole("button", { name: "저장하기" }).click();
   await mp.locator("#form-error").filter({ hasText: "이미 등록" }).waitFor();
   await mp.locator("#cancel-dialog").click();
+  await nav(mp, "고객관리");
+  await mp.locator("#add-button").click();
+  assert.equal(await mp.locator("#customer-code-mode").inputValue(), "auto");
+  assert.equal(
+    await mp.locator("[name=code]").evaluate((e) => e.readOnly),
+    true,
+  );
+  await mp.locator("[name=name]").fill("자동 코드 고객");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  assert.match(await mp.locator("tbody").innerText(), /C0001/);
+  await add(mp, { code: "MY-CLIENT", name: "수기 코드 고객" });
+  assert.match(await mp.locator("tbody").innerText(), /MY-CLIENT/);
   assert.deepEqual(errors, []);
   await b.close();
   await db.close();

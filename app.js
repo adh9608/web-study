@@ -87,6 +87,7 @@ let cloudMode = false,
 let storageFailed = false;
 let serialAutoAvailable = false;
 let serialManualAvailable = false;
+let customerCodeAvailable = false;
 const productCategories = { 0: "레일방제기", 1: "레일리프트", 2: "미스트" };
 function loadLocal() {
   storageFailed = false;
@@ -147,6 +148,7 @@ function applySnapshot(snapshot) {
   data = snapshot.data;
   serialAutoAvailable = snapshot.serial_auto === true;
   serialManualAvailable = snapshot.serial_manual === true;
+  customerCodeAvailable = snapshot.customer_code_auto === true;
   role = snapshot.role;
 }
 async function persist(next, record, old) {
@@ -363,6 +365,14 @@ function openEditor(id = null) {
   $("#form-fields").innerHTML = s.fields
     .map(([key, label, type, required, choices]) => {
       let control;
+      if (
+        page === "customers" &&
+        key === "code" &&
+        !id &&
+        cloudMode &&
+        customerCodeAvailable
+      )
+        required = false;
       if (page === "products" && key === "category" && id && !row.category)
         required = false;
       if (["customer", "product", "serviceProduct", "select"].includes(type)) {
@@ -386,6 +396,13 @@ function openEditor(id = null) {
         control = `<input id="field-${key}" name="${key}" type="${type}" value="${esc(row[key] || (!id && type === "date" && key !== "completed" ? today() : ""))}" ${required ? "required" : ""} maxlength="200">`;
       if (page === "products" && key === "serial")
         control = `<input id="field-serial" name="serial" value="${esc(row.serial || "")}" placeholder="저장 시 자동 생성" readonly>`;
+      if (
+        page === "customers" &&
+        key === "code" &&
+        cloudMode &&
+        customerCodeAvailable
+      )
+        control = `<input id="field-code" name="code" value="${esc(row.code || "")}" placeholder="저장 시 자동 생성" readonly>`;
       let help =
         type === "customer"
           ? "고객관리에서 등록한 고객을 선택하세요."
@@ -406,6 +423,15 @@ function openEditor(id = null) {
         ["category", "production"].includes(key)
       )
         help = "번호에 포함된 제품 구분과 생산일은 변경할 수 없습니다.";
+      if (
+        page === "customers" &&
+        key === "code" &&
+        cloudMode &&
+        customerCodeAvailable
+      )
+        help = id
+          ? "등록된 고객코드는 유지됩니다."
+          : "저장 시 C0001부터 누적 번호를 생성합니다.";
       return `<label class="field ${type === "textarea" ? "wide" : ""}" for="field-${key}">${label}${required ? "<b>*</b>" : ""}${control}${help ? `<small>${help}</small>` : ""}</label>`;
     })
     .join("");
@@ -434,6 +460,25 @@ function openEditor(id = null) {
         : "SN + 제품 구분 + 생산일(YYMMDD) + 구분별 누적 순번. 저장 시 DB가 확정합니다.";
     });
   }
+  if (page === "customers" && !id && cloudMode && customerCodeAvailable) {
+    $("#form-fields").insertAdjacentHTML(
+      "afterbegin",
+      `<label class="field wide" for="customer-code-mode">고객코드 입력 방식<select id="customer-code-mode"><option value="auto">자동 생성</option><option value="manual">수기 입력</option></select></label>`,
+    );
+    $("#customer-code-mode").addEventListener("change", () => {
+      const manual = $("#customer-code-mode").value === "manual";
+      const field = $("#field-code");
+      field.readOnly = !manual;
+      field.required = manual;
+      field.value = "";
+      field.placeholder = manual
+        ? "고객코드를 입력하세요"
+        : "저장 시 자동 생성";
+      field.parentElement.querySelector("small").textContent = manual
+        ? "기존 코드를 직접 입력합니다. 중복 코드는 등록할 수 없습니다."
+        : "저장 시 C0001부터 누적 번호를 생성합니다.";
+    });
+  }
   $("#editor").showModal();
 }
 $("#record-form").addEventListener("submit", async (e) => {
@@ -454,6 +499,12 @@ $("#record-form").addEventListener("submit", async (e) => {
       ).trim();
       if (
         required &&
+        !(
+          page === "customers" &&
+          key === "code" &&
+          !old &&
+          $("#customer-code-mode")?.value === "auto"
+        ) &&
         !record[key] &&
         !(page === "products" && key === "category" && old && !old.category)
       )
@@ -485,6 +536,11 @@ $("#record-form").addEventListener("submit", async (e) => {
       )
     )
       throw Error("이미 등록된 시리얼번호입니다.");
+    if (page === "customers" && !old && $("#customer-code-mode")) {
+      record.customer_code_mode = $("#customer-code-mode").value;
+      if (record.customer_code_mode === "manual" && !record.code)
+        throw Error("고객코드를 입력해 주세요.");
+    }
     if (
       page === "customers" &&
       data.customers.some(
