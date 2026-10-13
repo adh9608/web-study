@@ -48,6 +48,12 @@ window.FlowCloud = (() => {
   }
   function message(error, status) {
     const m = error?.message || error?.msg || error?.error_description || "";
+    if (m.includes("PRODUCT_CATEGORY_REQUIRED"))
+      return "제품 구분을 선택해 주세요.";
+    if (m.includes("SERIAL_SOURCE_IMMUTABLE"))
+      return "자동 생성된 번호의 제품 구분과 생산일은 변경할 수 없습니다.";
+    if (m.includes("SERIAL_IMMUTABLE"))
+      return "등록된 시리얼번호는 변경할 수 없습니다.";
     if (
       error?.code === "email_not_confirmed" ||
       m.includes("Email not confirmed")

@@ -8,7 +8,8 @@ const schemas = {
     singular: "제품",
     icon: "▧",
     fields: [
-      ["serial", "시리얼번호", "text", true],
+      ["serial", "시리얼번호", "text", false],
+      ["category", "제품 구분", "select", true, ["0", "1", "2"]],
       ["code", "모델명", "text", true],
       ["production", "생산일", "date", true],
       ["rail", "레일(사양)", "text"],
@@ -84,6 +85,8 @@ let cloudMode = false,
   busy = false,
   authGeneration = 0;
 let storageFailed = false;
+let serialAutoAvailable = false;
+const productCategories = { 0: "레일방제기", 1: "레일리프트", 2: "미스트" };
 function loadLocal() {
   storageFailed = false;
   data = { products: [], customers: [], shipments: [], service: [] };
@@ -119,13 +122,15 @@ const customer = (id) => data.customers.find((c) => c.id === id);
 const shipped = (id) => data.shipments.some((s) => s.productId === id);
 const status = (p) => (shipped(p.id) ? "출고" : p.status);
 const value = (row, key) =>
-  key === "productId"
-    ? (product(row[key])?.serial ?? "삭제된 제품")
-    : key === "customerId"
-      ? (customer(row[key])?.name ?? "삭제된 고객")
-      : page === "products" && key === "status"
-        ? status(row)
-        : row[key];
+  key === "category"
+    ? productCategories[row[key]] || "미분류"
+    : key === "productId"
+      ? (product(row[key])?.serial ?? "삭제된 제품")
+      : key === "customerId"
+        ? (customer(row[key])?.name ?? "삭제된 고객")
+        : page === "products" && key === "status"
+          ? status(row)
+          : row[key];
 function toast(message) {
   $("#toast").textContent = message;
   $("#toast").hidden = false;
@@ -139,6 +144,7 @@ function applySnapshot(snapshot) {
   )
     throw Error("서버 데이터 형식을 확인해 주세요.");
   data = snapshot.data;
+  serialAutoAvailable = snapshot.serial_auto === true;
   role = snapshot.role;
 }
 async function persist(next, record, old) {
@@ -160,6 +166,13 @@ function setBusy(value) {
     .forEach((e) => (e.disabled = value));
   if (!value && page === "products" && shipped(editing) && $("#field-status"))
     $("#field-status").disabled = true;
+  if (
+    !value &&
+    page === "products" &&
+    data.products.find((p) => p.id === editing)?.serial_generated &&
+    $("#field-category")
+  )
+    $("#field-category").disabled = true;
 }
 function badge(v) {
   return `<span class="badge ${["재고", "합격", "완료"].includes(v) ? "green" : ["검사대기", "진행중"].includes(v) ? "amber" : ""}">${esc(v)}</span>`;
@@ -331,6 +344,14 @@ function renderTable() {
     `전체 ${data[page].length}건 중 ${visible.length}건 표시`;
 }
 function openEditor(id = null) {
+  if (page === "products" && !id && (!cloudMode || !serialAutoAvailable)) {
+    toast(
+      cloudMode
+        ? "시리얼 자동 생성 DB 업데이트가 필요합니다. 관리자에게 요청하세요."
+        : "자동 시리얼 등록은 클라우드 로그인 후 사용할 수 있습니다.",
+    );
+    return;
+  }
   editing = id;
   const row = data[page].find((r) => r.id === id) || {};
   const s = schemas[page];
@@ -340,6 +361,8 @@ function openEditor(id = null) {
   $("#form-fields").innerHTML = s.fields
     .map(([key, label, type, required, choices]) => {
       let control;
+      if (page === "products" && key === "category" && id && !row.category)
+        required = false;
       if (["customer", "product", "serviceProduct", "select"].includes(type)) {
         let opts =
           type === "customer"
@@ -350,12 +373,17 @@ function openEditor(id = null) {
                   .map((p) => [p.id, `${p.serial} · ${p.code}`])
               : type === "serviceProduct"
                 ? data.products.map((p) => [p.id, `${p.serial} · ${p.code}`])
-                : choices.map((c) => [c, c]);
+                : choices.map((c) => [
+                    c,
+                    key === "category" ? `${c} · ${productCategories[c]}` : c,
+                  ]);
         control = `<select id="field-${key}" name="${key}" ${required ? "required" : ""}><option value="">선택해 주세요</option>${opts.map(([v, l]) => `<option value="${esc(v)}" ${row[key] === v || (!id && type === "select" && v === choices[0]) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
       } else if (type === "textarea")
         control = `<textarea id="field-${key}" name="${key}" ${required ? "required" : ""} maxlength="2000">${esc(row[key] || "")}</textarea>`;
       else
         control = `<input id="field-${key}" name="${key}" type="${type}" value="${esc(row[key] || (!id && type === "date" && key !== "completed" ? today() : ""))}" ${required ? "required" : ""} maxlength="200">`;
+      if (page === "products" && key === "serial")
+        control = `<input id="field-serial" name="serial" value="${esc(row.serial || "")}" placeholder="저장 시 자동 생성" readonly>`;
       let help =
         type === "customer"
           ? "고객관리에서 등록한 고객을 선택하세요."
@@ -366,12 +394,26 @@ function openEditor(id = null) {
               : page === "products" && key === "status" && shipped(id)
                 ? "출고 이력이 있는 제품은 출고 상태가 유지됩니다."
                 : "";
+      if (page === "products" && key === "serial")
+        help = id
+          ? "등록된 시리얼번호는 변경되지 않습니다."
+          : "SN + 제품 구분 + 생산일(YYMMDD) + 구분별 누적 순번. 저장 시 DB가 확정합니다.";
+      if (
+        page === "products" &&
+        row.serial_generated &&
+        ["category", "production"].includes(key)
+      )
+        help = "번호에 포함된 제품 구분과 생산일은 변경할 수 없습니다.";
       return `<label class="field ${type === "textarea" ? "wide" : ""}" for="field-${key}">${label}${required ? "<b>*</b>" : ""}${control}${help ? `<small>${help}</small>` : ""}</label>`;
     })
     .join("");
   if (page === "products" && shipped(id)) {
     $("#field-status").value = "출고";
     $("#field-status").disabled = true;
+  }
+  if (page === "products" && row.serial_generated) {
+    $("#field-category").disabled = true;
+    $("#field-production").readOnly = true;
   }
   $("#editor").showModal();
 }
@@ -384,11 +426,28 @@ $("#record-form").addEventListener("submit", async (e) => {
     const form = new FormData(e.target);
     for (const [key, , type, required] of schemas[page].fields) {
       record[key] = String(
-        form.get(key) ?? (key === "status" && old ? old.status : ""),
+        form.get(key) ??
+          (key === "status" && old
+            ? old.status
+            : key === "category" && old
+              ? old.category || ""
+              : ""),
       ).trim();
-      if (required && !record[key]) throw Error("필수 항목을 입력해 주세요.");
+      if (
+        required &&
+        !record[key] &&
+        !(page === "products" && key === "category" && old && !old.category)
+      )
+        throw Error("필수 항목을 입력해 주세요.");
       if (
         type === "select" &&
+        !(
+          page === "products" &&
+          key === "category" &&
+          old &&
+          !old.category &&
+          !record[key]
+        ) &&
         !schemas[page].fields.find((f) => f[0] === key)[4].includes(record[key])
       )
         throw Error("올바른 값을 선택해 주세요.");
@@ -438,7 +497,11 @@ $("#record-form").addEventListener("submit", async (e) => {
     await persist(next, record, old);
     $("#editor").close();
     render();
-    toast("정보가 저장되었습니다.");
+    toast(
+      page === "products" && !old
+        ? `제품이 등록되었습니다: ${data.products.find((p) => p.id === record.id)?.serial}`
+        : "정보가 저장되었습니다.",
+    );
   } catch (err) {
     $("#form-error").textContent =
       err.message || "저장하지 못했습니다. 연결 및 저장 공간을 확인해 주세요.";
