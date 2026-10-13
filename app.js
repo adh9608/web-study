@@ -192,7 +192,7 @@ const value = (row, key) =>
         ? (row.items || [])
             .map(
               (i) =>
-                `${i.model} / ${i.specification || "사양 없음"} × ${i.quantity}`,
+                `${i.model}${i.specification?.trim() ? ` / ${i.specification}` :""} × ${i.quantity}`
             )
             .join("; ")
         : key === "orderItemId"
