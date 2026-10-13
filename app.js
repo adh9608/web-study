@@ -9,7 +9,7 @@ const schemas = {
     icon: "▧",
     fields: [
       ["serial", "시리얼번호", "text", true],
-      ["code", "제품코드", "text", true],
+      ["code", "모델명", "text", true],
       ["production", "생산일", "date", true],
       ["rail", "레일(사양)", "text"],
       ["inspection", "검사", "select", true, ["검사대기", "합격", "불합격"]],
