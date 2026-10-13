@@ -1,8 +1,162 @@
 <!doctype html>
 <html lang="ko">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>FLOW · 운영 관리</title><link rel="stylesheet" href="app.css?v=20261013-login-fix"></head>
-<body>
-<div id="app-content" hidden><aside class="sidebar"><a class="brand" href="./"><span class="brand-mark">F</span> FLOW<span class="brand-dot">●</span></a><div class="workspace"><span class="workspace-icon">▧</span><div>운영 워크스페이스<small>제품부터 서비스까지</small></div></div><div class="nav-label">WORKSPACE</div><nav id="navigation" aria-label="주 메뉴"></nav><div class="sidebar-footer"><span class="live-dot"></span> <span id="storage-mode">클라우드 연결</span><small id="storage-description">직원 전용 운영 관리</small></div></aside>
-<div class="shell"><header class="topbar"><div>워크스페이스 <span>/</span> <strong id="breadcrumb">제품관리</strong></div><div class="top-right"><span id="today"></span><span id="account-label"></span><button id="refresh-button" class="secondary">새로고침</button><button id="logout-button" class="secondary">로그아웃</button></div></header><main><div class="heading"><div><div class="eyebrow">OPERATIONS MANAGEMENT</div><h1 id="page-title"></h1><p id="page-description"></p></div><button class="primary" id="add-button"></button></div><section id="stats" class="stats" aria-label="현황"></section><section class="list-panel"><div class="list-heading"><div><h2 id="list-title"></h2><span id="record-count"></span></div><div class="tools"><button id="export-button" class="secondary">↓ CSV 내보내기</button></div></div><div class="filters"><div class="filter-tabs" id="filter-tabs"></div><label class="search"><span>⌕</span><input id="search" type="search" placeholder="검색" aria-label="목록 검색"></label></div><div class="table-scroll"><table><thead id="table-head"></thead><tbody id="table-body"></tbody></table></div><div id="empty-state" class="empty" hidden></div><div class="table-footer"><span id="result-count"></span><span>등록 정보를 선택해 수정할 수 있습니다.</span></div></section><p class="storage-note" id="storage-note"></p><p id="sync-error" role="alert" hidden></p></main><footer>FLOW <span>작업의 흐름을 한곳에서.</span></footer></div></div>
-<dialog id="editor"><form id="record-form"><div class="dialog-heading"><div><div class="eyebrow">RECORD DETAILS</div><h2 id="dialog-title"></h2></div><button type="button" class="close" id="close-dialog" aria-label="닫기">×</button></div><div id="form-fields" class="form-grid"></div><p id="form-error" role="alert"></p><div class="dialog-footer"><button type="button" id="delete-button" class="danger">삭제</button><div><button type="button" id="cancel-dialog" class="secondary">취소</button><button type="submit" class="primary">저장하기</button></div></div></form></dialog><section id="login-screen" class="login-screen"><div class="login-card"><div class="brand"><span class="brand-mark">F</span> FLOW</div><div class="eyebrow">TEAM OPERATIONS</div><h1>운영 관리 로그인</h1><p id="login-description">초대받은 직원 계정으로 로그인해 주세요.</p><form id="login-form"><label class="field" for="login-username">아이디<input id="login-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="예: hong01" minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{2,31}" required></label><label class="field" for="login-password">비밀번호<input id="login-password" type="password" autocomplete="current-password" required></label><button class="primary" type="submit">로그인</button></form><p id="login-error" role="alert"></p><button id="demo-button" class="secondary" hidden>기존 브라우저 데이터 보기</button><p class="login-help" id="login-help">계정 발급 또는 비밀번호 재설정은 관리자에게 요청해 주세요.</p></div></section><div id="toast" role="status" hidden></div><script src="config.js?v=20261013-login-fix"></script><script src="cloud.js?v=20261013-login-fix"></script><script src="app.js?v=20261013-login-fix"></script>
-</body></html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>해광삼우FA · 운영 관리</title>
+    <link rel="stylesheet" href="app.css?v=20261013-login-fix" />
+  </head>
+  <body>
+    <div id="app-content" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="./"
+          ><span class="brand-mark">F</span> 해광삼우<span class="brand-dot"
+            >●</span
+          ></a
+        >
+        <div class="workspace">
+          <span class="workspace-icon">▧</span>
+          <div>운영 워크스페이스<small>제품부터 서비스까지</small></div>
+        </div>
+        <div class="nav-label">WORKSPACE</div>
+        <nav id="navigation" aria-label="주 메뉴"></nav>
+        <div class="sidebar-footer">
+          <span class="live-dot"></span>
+          <span id="storage-mode">클라우드 연결</span
+          ><small id="storage-description">직원 전용 운영 관리</small>
+        </div>
+      </aside>
+      <div class="shell">
+        <header class="topbar">
+          <div>
+            워크스페이스 <span>/</span>
+            <strong id="breadcrumb">제품관리</strong>
+          </div>
+          <div class="top-right">
+            <span id="today"></span><span id="account-label"></span
+            ><button id="refresh-button" class="secondary">새로고침</button
+            ><button id="logout-button" class="secondary">로그아웃</button>
+          </div>
+        </header>
+        <main>
+          <div class="heading">
+            <div>
+              <div class="eyebrow">OPERATIONS MANAGEMENT</div>
+              <h1 id="page-title"></h1>
+              <p id="page-description"></p>
+            </div>
+            <button class="primary" id="add-button"></button>
+          </div>
+          <section id="stats" class="stats" aria-label="현황"></section>
+          <section class="list-panel">
+            <div class="list-heading">
+              <div>
+                <h2 id="list-title"></h2>
+                <span id="record-count"></span>
+              </div>
+              <div class="tools">
+                <button id="export-button" class="secondary">
+                  ↓ CSV 내보내기
+                </button>
+              </div>
+            </div>
+            <div class="filters">
+              <div class="filter-tabs" id="filter-tabs"></div>
+              <label class="search"
+                ><span>⌕</span
+                ><input
+                  id="search"
+                  type="search"
+                  placeholder="검색"
+                  aria-label="목록 검색"
+              /></label>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead id="table-head"></thead>
+                <tbody id="table-body"></tbody>
+              </table>
+            </div>
+            <div id="empty-state" class="empty" hidden></div>
+            <div class="table-footer">
+              <span id="result-count"></span
+              ><span>등록 정보를 선택해 수정할 수 있습니다.</span>
+            </div>
+          </section>
+          <p class="storage-note" id="storage-note"></p>
+          <p id="sync-error" role="alert" hidden></p>
+        </main>
+        <footer>FLOW <span>작업의 흐름을 한곳에서.</span></footer>
+      </div>
+    </div>
+    <dialog id="editor">
+      <form id="record-form">
+        <div class="dialog-heading">
+          <div>
+            <div class="eyebrow">RECORD DETAILS</div>
+            <h2 id="dialog-title"></h2>
+          </div>
+          <button
+            type="button"
+            class="close"
+            id="close-dialog"
+            aria-label="닫기"
+          >
+            ×
+          </button>
+        </div>
+        <div id="form-fields" class="form-grid"></div>
+        <p id="form-error" role="alert"></p>
+        <div class="dialog-footer">
+          <button type="button" id="delete-button" class="danger">삭제</button>
+          <div>
+            <button type="button" id="cancel-dialog" class="secondary">
+              취소</button
+            ><button type="submit" class="primary">저장하기</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+    <section id="login-screen" class="login-screen">
+      <div class="login-card">
+        <div class="brand"><span class="brand-mark">F</span> FLOW</div>
+        <div class="eyebrow">TEAM OPERATIONS</div>
+        <h1>운영 관리 로그인</h1>
+        <p id="login-description">초대받은 직원 계정으로 로그인해 주세요.</p>
+        <form id="login-form">
+          <label class="field" for="login-username"
+            >아이디<input
+              id="login-username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="예: hong01"
+              minlength="3"
+              maxlength="32"
+              pattern="[A-Za-z0-9][A-Za-z0-9_\-]{2,31}"
+              required /></label
+          ><label class="field" for="login-password"
+            >비밀번호<input
+              id="login-password"
+              type="password"
+              autocomplete="current-password"
+              required /></label
+          ><button class="primary" type="submit">로그인</button>
+        </form>
+        <p id="login-error" role="alert"></p>
+        <button id="demo-button" class="secondary" hidden>
+          기존 브라우저 데이터 보기
+        </button>
+        <p class="login-help" id="login-help">
+          계정 발급 또는 비밀번호 재설정은 관리자에게 요청해 주세요.
+        </p>
+      </div>
+    </section>
+    <div id="toast" role="status" hidden></div>
+    <script src="config.js?v=20261013-login-fix"></script>
+    <script src="cloud.js?v=20261013-login-fix"></script>
+    <script src="app.js?v=20261013-login-fix"></script>
+  </body>
+</html>
