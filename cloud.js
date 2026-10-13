@@ -17,6 +17,10 @@ window.FlowCloud = (() => {
  function remember(value){sessionGeneration++;session=value;try{if(value)sessionStorage.setItem(sessionKey,JSON.stringify(value));else sessionStorage.removeItem(sessionKey);}catch{}}
  function message(error,status){
   const m=error?.message||error?.msg||error?.error_description||'';
+  if(error?.code==='email_not_confirmed'||m.includes('Email not confirmed'))return '계정의 이메일 확인 상태가 미완료입니다. Supabase에서 Auto Confirm User 설정을 확인해 주세요.';
+  if(error?.code==='PGRST202')return 'DB 로그인 연결 함수가 없습니다. 관리자가 Supabase 설치 SQL을 실행해야 합니다.';
+  if(m.includes('Invalid API key')||m.includes('Invalid API Key'))return 'Supabase 공개 연결 키가 올바른지 확인해 주세요.';
+  if(status===429)return '로그인 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.';
   if(status===401||m.includes('Invalid login credentials'))return '아이디 또는 비밀번호를 확인해 주세요. 로그인이 만료되었다면 다시 로그인하세요.';
   if(m.includes('STAFF_REQUIRED'))return '직원 권한이 없습니다. 관리자에게 계정 등록을 요청하세요.';
   if(m.includes('ADMIN_REQUIRED'))return '삭제는 관리자만 할 수 있습니다.';

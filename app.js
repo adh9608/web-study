@@ -9,6 +9,10 @@ const schemas={
 };
 let data={products:[],customers:[],shipments:[],service:[]},page='products',filter='전체',editing=null,toastTimer;
 const cloud=window.FlowCloud;
+// Resolve both current and previous login markup during browser cache updates.
+const loginInput=$('#login-form input[autocomplete="username"]');
+if(loginInput){loginInput.type='text';loginInput.name='username';loginInput.minLength=3;loginInput.maxLength=32;loginInput.pattern='[A-Za-z0-9][A-Za-z0-9_\\-]{2,31}';loginInput.placeholder='예: hong01';const label=document.querySelector('label[for="'+loginInput.id+'"]');if(label?.firstChild?.nodeType===Node.TEXT_NODE)label.firstChild.textContent='아이디';}
+
 let cloudMode=false,role='employee',busy=false,authGeneration=0;
 let storageFailed=false;
 function loadLocal(){storageFailed=false;data={products:[],customers:[],shipments:[],service:[]};try{const raw=localStorage.getItem(storageKey);if(raw){const saved=JSON.parse(raw);if(!Object.keys(data).every(k=>Array.isArray(saved[k])))throw Error('저장 데이터 형식 오류');data=saved;}}catch{storageFailed=true;}}
@@ -102,7 +106,7 @@ function showApp(){
 }
 function showLogin(){authGeneration++;if($('#editor').open)$('#editor').close();data={products:[],customers:[],shipments:[],service:[]};$('#app-content').hidden=true;$('#login-screen').hidden=false;$('#login-password').value='';page='products';filter='전체';$('#search').value='';$('#sync-error').hidden=true;}
 async function loadCloud(){const generation=authGeneration;const snapshot=await cloud.snapshot();if(generation!==authGeneration||!cloud.hasSession())return;applySnapshot(snapshot);cloudMode=true;showApp();}
-$('#login-form').addEventListener('submit',async e=>{e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;button.textContent='로그인 중…';$('#login-error').textContent='';try{await cloud.login($('#login-username').value.trim(),$('#login-password').value);$('#login-password').value='';await loadCloud();}catch(error){cloud.forget();showLogin();$('#login-error').textContent=error.message;}finally{button.disabled=false;button.textContent='로그인';}});
+$('#login-form').addEventListener('submit',async e=>{e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;button.textContent='로그인 중…';$('#login-error').textContent='';try{if(!loginInput)throw Error('로그인 화면을 새로고침한 뒤 다시 시도해 주세요.');await cloud.login(loginInput.value.trim(),$('#login-password').value);$('#login-password').value='';await loadCloud();}catch(error){cloud.forget();showLogin();$('#login-error').textContent=error.message;}finally{button.disabled=false;button.textContent='로그인';}});
 $('#logout-button').addEventListener('click',async()=>{if(busy)return;const logout=cloudMode?cloud.logout():Promise.resolve();cloudMode=false;showLogin();try{await logout;}catch{toast('기기에서 로그아웃했습니다. 서버 연결은 확인해 주세요.');}});
 $('#refresh-button').addEventListener('click',async()=>{if(busy)return;const b=$('#refresh-button');b.disabled=true;try{if(cloudMode)await loadCloud();else{loadLocal();render();}$('#sync-error').hidden=true;toast('목록을 새로고침했습니다.');}catch(error){if(!cloud.hasSession()){showLogin();$('#login-error').textContent=error.message;}else{$('#sync-error').hidden=false;$('#sync-error').textContent=error.message;}}finally{b.disabled=false;}});
 $('#demo-button').addEventListener('click',()=>{cloudMode=false;role='admin';loadLocal();showApp();if(storageFailed)toast('기존 데이터를 읽지 못했습니다. 덮어쓰기를 중단했습니다.');});
