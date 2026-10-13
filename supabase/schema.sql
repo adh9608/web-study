@@ -85,7 +85,7 @@ declare member_role text;
 begin
  member_role:=public.flow_role();
  if member_role is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
- return jsonb_build_object('serial_auto',true,'role',member_role,'data',jsonb_build_object(
+ return jsonb_build_object('serial_auto',true,'serial_manual',true,'role',member_role,'data',jsonb_build_object(
   'products',coalesce((select jsonb_agg(to_jsonb(p) order by p.serial) from public.products p),'[]'::jsonb),
   'customers',coalesce((select jsonb_agg(to_jsonb(c) order by c.name) from public.customers c),'[]'::jsonb),
   'shipments',coalesce((select jsonb_agg(to_jsonb(s) order by s.date desc,s.id) from public.shipments s),'[]'::jsonb),
@@ -116,7 +116,8 @@ begin
  payload:=p_record||jsonb_build_object('version',coalesce(current_version,0)+1);
  if p_table='products' then
   if current_version is null then
-   payload:=payload||jsonb_build_object('serial','','serial_generated',false);
+   if coalesce(p_record->>'serial_mode','auto') not in ('auto','manual') then raise exception 'INVALID_SERIAL_MODE'; end if;
+   payload:=payload||jsonb_build_object('serial',case when p_record->>'serial_mode'='manual' then btrim(coalesce(p_record->>'serial','')) else '' end,'serial_generated',coalesce(p_record->>'serial_mode','auto')<>'manual');
   else
    select * into prod from public.products where id=record_id;
    -- Preserve the immutable identifier even when older clients omit it.
@@ -198,6 +199,15 @@ begin
  end if;
  if new.category is null or new.category not in ('0','1','2') then raise exception 'PRODUCT_CATEGORY_REQUIRED'; end if;
  if new.production is null then raise exception 'PRODUCTION_REQUIRED'; end if;
+ if not new.serial_generated then
+  new.serial:=btrim(new.serial);
+  if new.serial is null or new.serial='' then raise exception 'MANUAL_SERIAL_REQUIRED'; end if;
+  if upper(new.serial) ~ '^SN[012][0-9]{10,}$' then
+   if substring(upper(new.serial) from 3 for 1)<>new.category then raise exception 'SERIAL_CATEGORY_MISMATCH'; end if;
+   update public.flow_serial_counters set last_number=greatest(last_number,substring(new.serial from 10)::numeric) where category=new.category;
+  end if;
+  return new;
+ end if;
  loop
   update public.flow_serial_counters set last_number=last_number+1 where category=new.category returning last_number into seq;
   if seq is null then raise exception 'SERIAL_COUNTER_MISSING'; end if;

@@ -325,6 +325,27 @@ const { chromium } = require("playwright");
   await oldPage.locator("#add-button").click();
   assert.equal(await oldPage.locator("#editor").isVisible(), false);
   assert.match(await oldPage.locator("#toast").innerText(), /DB 업데이트/);
+  const manualContext = await context();
+  const mp = await manualContext.newPage();
+  await login(mp, "admin");
+  await mp.locator("#add-button").click();
+  await mp.locator("#serial-mode").selectOption("manual");
+  assert.equal(
+    await mp.locator("[name=serial]").evaluate((e) => e.readOnly),
+    false,
+  );
+  await mp.locator("[name=serial]").fill("MANUAL-001");
+  await mp.locator("[name=code]").fill("수기 모델");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  assert.match(await mp.locator("tbody").innerText(), /MANUAL-001/);
+  await mp.locator("#add-button").click();
+  await mp.locator("#serial-mode").selectOption("manual");
+  await mp.locator("[name=serial]").fill("manual-001");
+  await mp.locator("[name=code]").fill("수기 모델");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#form-error").filter({ hasText: "이미 등록" }).waitFor();
+  await mp.locator("#cancel-dialog").click();
   assert.deepEqual(errors, []);
   await b.close();
   await db.close();

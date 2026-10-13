@@ -48,6 +48,12 @@ window.FlowCloud = (() => {
   }
   function message(error, status) {
     const m = error?.message || error?.msg || error?.error_description || "";
+    if (m.includes("MANUAL_SERIAL_REQUIRED"))
+      return "수기로 입력할 시리얼번호를 작성해 주세요.";
+    if (m.includes("SERIAL_CATEGORY_MISMATCH"))
+      return "시리얼번호의 제품 구분 숫자와 선택한 제품 구분이 다릅니다.";
+    if (m.includes("INVALID_SERIAL_MODE"))
+      return "시리얼번호 입력 방식을 선택해 주세요.";
     if (m.includes("PRODUCT_CATEGORY_REQUIRED"))
       return "제품 구분을 선택해 주세요.";
     if (m.includes("SERIAL_SOURCE_IMMUTABLE"))

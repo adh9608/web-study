@@ -86,6 +86,7 @@ let cloudMode = false,
   authGeneration = 0;
 let storageFailed = false;
 let serialAutoAvailable = false;
+let serialManualAvailable = false;
 const productCategories = { 0: "레일방제기", 1: "레일리프트", 2: "미스트" };
 function loadLocal() {
   storageFailed = false;
@@ -145,6 +146,7 @@ function applySnapshot(snapshot) {
     throw Error("서버 데이터 형식을 확인해 주세요.");
   data = snapshot.data;
   serialAutoAvailable = snapshot.serial_auto === true;
+  serialManualAvailable = snapshot.serial_manual === true;
   role = snapshot.role;
 }
 async function persist(next, record, old) {
@@ -415,6 +417,23 @@ function openEditor(id = null) {
     $("#field-category").disabled = true;
     $("#field-production").readOnly = true;
   }
+  if (page === "products" && !id) {
+    const options = `<label class="field wide" for="serial-mode">시리얼번호 입력 방식<select id="serial-mode"><option value="auto">자동 생성</option><option value="manual" ${serialManualAvailable ? "" : "disabled"}>수기 입력${serialManualAvailable ? "" : " (DB 업데이트 필요)"}</option></select></label>`;
+    $("#form-fields").insertAdjacentHTML("afterbegin", options);
+    $("#serial-mode").addEventListener("change", () => {
+      const manual = $("#serial-mode").value === "manual";
+      const field = $("#field-serial");
+      field.readOnly = !manual;
+      field.required = manual;
+      field.value = "";
+      field.placeholder = manual
+        ? "시리얼번호를 입력하세요"
+        : "저장 시 자동 생성";
+      field.parentElement.querySelector("small").textContent = manual
+        ? "기존 번호를 직접 입력합니다. 중복된 번호는 등록할 수 없습니다."
+        : "SN + 제품 구분 + 생산일(YYMMDD) + 구분별 누적 순번. 저장 시 DB가 확정합니다.";
+    });
+  }
   $("#editor").showModal();
 }
 $("#record-form").addEventListener("submit", async (e) => {
@@ -451,6 +470,11 @@ $("#record-form").addEventListener("submit", async (e) => {
         !schemas[page].fields.find((f) => f[0] === key)[4].includes(record[key])
       )
         throw Error("올바른 값을 선택해 주세요.");
+    }
+    if (page === "products" && !old) {
+      record.serial_mode = $("#serial-mode").value;
+      if (record.serial_mode === "manual" && !record.serial)
+        throw Error("시리얼번호를 입력해 주세요.");
     }
     if (
       page === "products" &&
