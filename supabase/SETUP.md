@@ -10,7 +10,13 @@ supabase.com에서 무료 프로젝트를 생성합니다. DB 비밀번호는 �
 
 ## 3. 직원 계정 만들기
 
-Authentication 설정에서 **Allow new users to sign up**을 끕니다. Authentication → Users에서 **Add user → Create new user**로 직원 계정을 생성합니다. 비밀번호는 별도의 안전한 경로로 직원에게 전달합니다. 초기 버전은 관리자 생성 계정과 이메일/비밀번호 로그인만 지원합니다. 사용자 스스로 가입하거나 초대 메일 링크에서 비밀번호를 설정하는 화면은 없습니다.
+Authentication 설정에서 **Allow new users to sign up**을 끕니다. Authentication → Users에서 **Add user → Create new user**로 직원 계정을 생성합니다. 비밀번호는 별도의 안전한 경로로 직원에게 전달합니다. 직원 화면은 **아이디/비밀번호**로 로그인합니다. 아이디는 영문·숫자·밑줄·하이픈으로 3~32자이며 대소문자는 구분하지 않습니다.
+
+Supabase는 내부적으로 이메일 형식의 식별자를 요구하므로 **아이디@flow.invalid**로 계정을 만듭니다. 예: 직원 아이디 `admin` → Users의 Email 입력값 `admin@flow.invalid`. `flow.invalid`는 실제 메일이 전달되지 않는 내부 식별용 예약 도메인입니다. 메일 발송·이메일 인증을 사용하지 않습니다. 계정 생성 시 **Auto Confirm User**를 켜고, 이메일 초대 대신 Create new user를 사용하세요. 직원은 웹앱에 `admin`만 입력합니다.
+
+기존 이메일 계정이 있다면 자동 변환되지 않습니다. 기존 계정의 UUID와 flow_members 연결을 유지한 채 Supabase의 지원되는 사용자 관리 기능으로 이메일을 `아이디@flow.invalid`로 변경하고 확인 상태를 유지해야 합니다. 기존 계정을 무작정 삭제하지 마세요. 새 계정을 만들 경우 새 UUID에 관리자/직원 역할을 별도로 부여해야 합니다.
+
+config.js의 usernameEmailDomain을 변경할 경우 내부 계정의 도메인도 같아야 합니다. 실제 메일 수신과 셀프서비스 복구가 필요하면 소유한 도메인 및 이메일 발송/복구 기능을 별도로 구성해야 합니다. 사용자 스스로 가입하거나 초대 메일 링크에서 비밀번호를 설정하는 화면은 없습니다.
 
 Users 화면에서 사용자 UUID를 복사한 뒤 SQL Editor에서 아래를 실행합니다. UUID는 본인의 실제 사용자 ID로 바꿉니다.
 
@@ -30,6 +36,7 @@ Project Settings의 API/Data API/API Keys 화면에서 Project URL과 **publisha
 
 ```js
 window.FLOW_CONFIG = {
+  usernameEmailDomain: 'flow.invalid',
   supabaseUrl: 'https://프로젝트ID.supabase.co',
   supabasePublishableKey: 'sb_publishable_공개키'
 };

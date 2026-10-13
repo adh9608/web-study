@@ -4,6 +4,7 @@ window.FlowCloud = (() => {
  const config=window.FLOW_CONFIG||{};
  const url=String(config.supabaseUrl||'').replace(/\/$/,'');
  const key=String(config.supabasePublishableKey||'');
+ const usernameDomain=String(config.usernameEmailDomain||'flow.invalid').toLowerCase();
  const configured=!!(url&&key);
  const sessionKey='flow-auth:'+url;
  let session=null,refreshing=null,sessionGeneration=0;
@@ -16,7 +17,7 @@ window.FlowCloud = (() => {
  function remember(value){sessionGeneration++;session=value;try{if(value)sessionStorage.setItem(sessionKey,JSON.stringify(value));else sessionStorage.removeItem(sessionKey);}catch{}}
  function message(error,status){
   const m=error?.message||error?.msg||error?.error_description||'';
-  if(status===401||m.includes('Invalid login credentials'))return '이메일 또는 비밀번호를 확인해 주세요. 로그인이 만료되었다면 다시 로그인하세요.';
+  if(status===401||m.includes('Invalid login credentials'))return '아이디 또는 비밀번호를 확인해 주세요. 로그인이 만료되었다면 다시 로그인하세요.';
   if(m.includes('STAFF_REQUIRED'))return '직원 권한이 없습니다. 관리자에게 계정 등록을 요청하세요.';
   if(m.includes('ADMIN_REQUIRED'))return '삭제는 관리자만 할 수 있습니다.';
   if(m.includes('STALE_RECORD'))return '다른 직원이 이 정보를 변경했습니다. 목록을 새로고침한 뒤 다시 수정하세요.';
@@ -51,8 +52,8 @@ window.FlowCloud = (() => {
  return {
   configured,
   hasSession:()=>!!session,
-  email:()=>session?.user?.email||'',
-  async login(email,password){remember(await request('/auth/v1/token?grant_type=password',{body:{email,password}}));},
+  username:()=>{const email=session?.user?.email||'';return email.endsWith('@'+usernameDomain)?email.slice(0,-usernameDomain.length-1):'직원';},
+  async login(username,password){const normalized=String(username).trim().toLowerCase();if(!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(normalized))throw Error('아이디는 영문·숫자·밑줄·하이픈으로 3~32자 입력하세요.');if(!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(usernameDomain))throw Error('아이디 로그인 설정을 확인해 주세요.');const email=normalized+'@'+usernameDomain;remember(await request('/auth/v1/token?grant_type=password',{body:{email,password}}));},
   async logout(){const token=session?.access_token;remember(null);if(token)await request('/auth/v1/logout?scope=local',{body:{},auth:true,token});},
   forget:()=>remember(null),
   snapshot:()=>rpc('flow_snapshot'),
