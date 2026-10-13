@@ -48,6 +48,22 @@ window.FlowCloud = (() => {
   }
   function message(error, status) {
     const m = error?.message || error?.msg || error?.error_description || "";
+    const orderErrors = {
+      ORDER_ITEMS_REQUIRED: "수주에 품목을 1~100개 등록해 주세요.",
+      INVALID_ORDER_ITEM: "수주 품목을 확인해 주세요.",
+      ORDER_CUSTOMER_LOCKED:
+        "출고 이력이 있는 수주의 고객은 변경할 수 없습니다.",
+      ORDER_QUANTITY_BELOW_SHIPPED:
+        "주문 수량은 이미 출고한 수량보다 적을 수 없습니다.",
+      ORDER_ITEM_LOCKED: "출고한 품목의 모델명과 사양은 변경할 수 없습니다.",
+      ORDER_CANCELLED: "취소된 수주에는 출고를 등록할 수 없습니다.",
+      ORDER_CUSTOMER_MISMATCH: "수주의 고객과 출고 고객이 다릅니다.",
+      ORDER_PRODUCT_MISMATCH: "수주 품목과 제품의 모델명·사양이 다릅니다.",
+      ORDER_OVERSHIP: "주문 수량을 초과해 출고할 수 없습니다.",
+      ORDER_SHIPMENT_DATE: "출고일은 수주 접수일 이후여야 합니다.",
+    };
+    for (const [code, label] of Object.entries(orderErrors))
+      if (m.includes(code)) return label;
     if (m.includes("MANUAL_CUSTOMER_CODE_REQUIRED"))
       return "수기로 입력할 고객코드를 작성해 주세요.";
     if (m.includes("CUSTOMER_CODE_IMMUTABLE"))

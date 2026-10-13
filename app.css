@@ -832,3 +832,58 @@ dialog::backdrop {
     padding: 28px;
   }
 }
+
+.form-grid .order-lines {
+  grid-column: 1/-1;
+}
+.order-lines-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.order-lines p {
+  font-size: 11px;
+  color: #8391a0;
+  line-height: 1.7;
+}
+.order-line {
+  display: grid;
+  grid-template-columns: 1fr 1fr 90px;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-top: 12px;
+}
+.item-progress {
+  grid-column: 1/3;
+  align-self: center;
+  font-size: 11px;
+  color: #8391a0;
+}
+.order-line .danger {
+  font-size: 11px;
+}
+#editor:has(.order-lines) {
+  width: 760px;
+}
+.order-line input[readonly] {
+  background: #f6f8fb;
+}
+@media (max-width: 750px) {
+  .order-line {
+    grid-template-columns: 1fr 1fr;
+  }
+  .order-line label:first-child {
+    grid-column: 1/-1;
+  }
+  .item-progress {
+    grid-column: 1;
+  }
+  .sidebar nav {
+    flex-wrap: wrap;
+  }
+  .sidebar nav button {
+    min-width: 80px;
+  }
+}

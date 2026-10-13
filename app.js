@@ -31,6 +31,30 @@ const schemas = {
       ["notes", "비고", "textarea"],
     ],
   },
+  orders: {
+    title: "수주관리",
+    description: "고객 주문과 품목별 생산·출고 진행 상황을 관리하세요.",
+    singular: "수주",
+    icon: "▤",
+    fields: [
+      ["number", "수주번호", "text", false],
+      ["received", "접수일", "date", true],
+      ["customerId", "고객명", "customer", true],
+      ["due", "납기일", "date", true],
+      [
+        "stage",
+        "진행 상태",
+        "select",
+        true,
+        ["접수", "생산중", "출고대기", "취소"],
+      ],
+      ["items_summary", "주문 품목", "computed"],
+      ["total", "주문 수량", "computed"],
+      ["delivered", "출고 수량", "computed"],
+      ["remaining", "남은 수량", "computed"],
+      ["notes", "비고", "textarea"],
+    ],
+  },
   shipments: {
     title: "출고관리",
     description: "고객과 제품을 연결하고 출고 내역을 관리하세요.",
@@ -38,6 +62,7 @@ const schemas = {
     icon: "↗",
     fields: [
       ["date", "출고일", "date", true],
+      ["orderItemId", "연결 수주 품목", "orderItem", false],
       ["customerId", "고객명", "customer", true],
       ["name", "제품명", "text", true],
       ["productId", "시리얼번호", "product", true],
@@ -60,7 +85,13 @@ const schemas = {
     ],
   },
 };
-let data = { products: [], customers: [], shipments: [], service: [] },
+let data = {
+    products: [],
+    customers: [],
+    orders: [],
+    shipments: [],
+    service: [],
+  },
   page = "products",
   filter = "전체",
   editing = null,
@@ -88,17 +119,28 @@ let storageFailed = false;
 let serialAutoAvailable = false;
 let serialManualAvailable = false;
 let customerCodeAvailable = false;
+let ordersAvailable = false;
 const productCategories = { 0: "레일방제기", 1: "레일리프트", 2: "미스트" };
 function loadLocal() {
   storageFailed = false;
-  data = { products: [], customers: [], shipments: [], service: [] };
+  data = {
+    products: [],
+    customers: [],
+    orders: [],
+    shipments: [],
+    service: [],
+  };
   try {
     const raw = localStorage.getItem(storageKey);
     if (raw) {
       const saved = JSON.parse(raw);
-      if (!Object.keys(data).every((k) => Array.isArray(saved[k])))
+      if (
+        !["products", "customers", "shipments", "service"].every((k) =>
+          Array.isArray(saved[k]),
+        )
+      )
         throw Error("저장 데이터 형식 오류");
-      data = saved;
+      data = { ...saved, orders: saved.orders || [] };
     }
   } catch {
     storageFailed = true;
@@ -123,16 +165,49 @@ const product = (id) => data.products.find((p) => p.id === id);
 const customer = (id) => data.customers.find((c) => c.id === id);
 const shipped = (id) => data.shipments.some((s) => s.productId === id);
 const status = (p) => (shipped(p.id) ? "출고" : p.status);
+const orderTotals = (o) => ({
+  total: (o.items || []).reduce((n, i) => n + i.quantity, 0),
+  delivered: (o.items || []).reduce((n, i) => n + i.delivered, 0),
+  remaining: (o.items || []).reduce((n, i) => n + i.quantity - i.delivered, 0),
+});
+const orderStage = (o) =>
+  o.stage === "취소"
+    ? "취소"
+    : orderTotals(o).total > 0 && orderTotals(o).remaining === 0
+      ? "완료"
+      : o.stage;
+function linkedItem(id) {
+  for (const order of data.orders) {
+    const item = order.items.find((i) => i.id === id);
+    if (item) return { order, item };
+  }
+  return null;
+}
 const value = (row, key) =>
-  key === "category"
-    ? productCategories[row[key]] || "미분류"
-    : key === "productId"
-      ? (product(row[key])?.serial ?? "삭제된 제품")
-      : key === "customerId"
-        ? (customer(row[key])?.name ?? "삭제된 고객")
-        : page === "products" && key === "status"
-          ? status(row)
-          : row[key];
+  page === "orders" && ["total", "delivered", "remaining"].includes(key)
+    ? orderTotals(row)[key]
+    : page === "orders" && key === "stage"
+      ? orderStage(row)
+      : key === "items_summary"
+        ? (row.items || [])
+            .map(
+              (i) =>
+                `${i.model} / ${i.specification || "사양 없음"} × ${i.quantity}`,
+            )
+            .join("; ")
+        : key === "orderItemId"
+          ? linkedItem(row[key])
+            ? `${linkedItem(row[key]).order.number} · ${linkedItem(row[key]).item.model}`
+            : "—"
+          : key === "category"
+            ? productCategories[row[key]] || "미분류"
+            : key === "productId"
+              ? (product(row[key])?.serial ?? "삭제된 제품")
+              : key === "customerId"
+                ? (customer(row[key])?.name ?? "삭제된 고객")
+                : page === "products" && key === "status"
+                  ? status(row)
+                  : row[key];
 function toast(message) {
   $("#toast").textContent = message;
   $("#toast").hidden = false;
@@ -142,13 +217,16 @@ function toast(message) {
 function applySnapshot(snapshot) {
   if (
     !snapshot?.data ||
-    !Object.keys(data).every((k) => Array.isArray(snapshot.data[k]))
+    !["products", "customers", "shipments", "service"].every((k) =>
+      Array.isArray(snapshot.data[k]),
+    )
   )
     throw Error("서버 데이터 형식을 확인해 주세요.");
-  data = snapshot.data;
+  data = { ...snapshot.data, orders: snapshot.data.orders || [] };
   serialAutoAvailable = snapshot.serial_auto === true;
   serialManualAvailable = snapshot.serial_manual === true;
   customerCodeAvailable = snapshot.customer_code_auto === true;
+  ordersAvailable = snapshot.orders_enabled === true;
   role = snapshot.role;
 }
 async function persist(next, record, old) {
@@ -168,6 +246,13 @@ function setBusy(value) {
   $("#record-form")
     .querySelectorAll("button,input,select,textarea")
     .forEach((e) => (e.disabled = value));
+  if (!value && page === "orders")
+    document.querySelectorAll(".order-line").forEach((el) => {
+      const item = data.orders
+        .find((o) => o.id === editing)
+        ?.items.find((i) => i.id === el.dataset.id);
+      if (item?.delivered) el.querySelector("button").disabled = true;
+    });
   if (!value && page === "products" && shipped(editing) && $("#field-status"))
     $("#field-status").disabled = true;
   if (
@@ -254,6 +339,31 @@ function stats() {
         "▤",
       ],
     ];
+  if (page === "orders")
+    items = [
+      ["전체 수주", data.orders.length, "접수된 고객 주문", "▤"],
+      [
+        "진행 중",
+        data.orders.filter((o) => !["완료", "취소"].includes(orderStage(o)))
+          .length,
+        "생산 및 출고 대기",
+        "◷",
+      ],
+      [
+        "완료",
+        data.orders.filter((o) => orderStage(o) === "완료").length,
+        "전체 수량 출고 완료",
+        "✓",
+      ],
+      [
+        "남은 수량",
+        data.orders
+          .filter((o) => o.stage !== "취소")
+          .reduce((n, o) => n + orderTotals(o).remaining, 0),
+        "미출고 제품 수량",
+        "↗",
+      ],
+    ];
   $("#stats").innerHTML = items
     .map(
       ([label, n, note, icon]) =>
@@ -264,6 +374,8 @@ function stats() {
 function rows() {
   const q = $("#search").value.trim().toLocaleLowerCase();
   return data[page].filter((r) => {
+    if (page === "orders" && filter !== "전체" && orderStage(r) !== filter)
+      return false;
     if (
       page === "products" &&
       filter !== "전체" &&
@@ -306,7 +418,9 @@ function render() {
       ? ["전체", "재고", "출고", "검사대기"]
       : page === "service"
         ? ["전체", "진행중", "완료"]
-        : ["전체"];
+        : page === "orders"
+          ? ["전체", "접수", "생산중", "출고대기", "완료", "취소"]
+          : ["전체"];
   $("#filter-tabs").innerHTML = filters
     .map(
       (f) =>
@@ -331,7 +445,7 @@ function renderTable() {
         s.fields
           .map(([key]) => {
             const v = value(r, key);
-            return `<td>${["status", "inspection"].includes(key) ? badge(v) : esc(v || "—")}</td>`;
+            return `<td>${["status", "inspection", "stage"].includes(key) ? badge(v) : esc(v === 0 ? 0 : v || "—")}</td>`;
           })
           .join("") +
         (page === "service"
@@ -348,6 +462,10 @@ function renderTable() {
     `전체 ${data[page].length}건 중 ${visible.length}건 표시`;
 }
 function openEditor(id = null) {
+  if (page === "orders" && (!cloudMode || !ordersAvailable)) {
+    toast("수주관리 DB 업데이트와 클라우드 로그인이 필요합니다.");
+    return;
+  }
   if (page === "products" && !id && (!cloudMode || !serialAutoAvailable)) {
     toast(
       cloudMode
@@ -363,6 +481,7 @@ function openEditor(id = null) {
   $("#form-error").textContent = "";
   $("#delete-button").hidden = !id || (cloudMode && role !== "admin");
   $("#form-fields").innerHTML = s.fields
+    .filter((f) => f[2] !== "computed")
     .map(([key, label, type, required, choices]) => {
       let control;
       if (
@@ -375,7 +494,15 @@ function openEditor(id = null) {
         required = false;
       if (page === "products" && key === "category" && id && !row.category)
         required = false;
-      if (["customer", "product", "serviceProduct", "select"].includes(type)) {
+      if (
+        [
+          "customer",
+          "product",
+          "serviceProduct",
+          "select",
+          "orderItem",
+        ].includes(type)
+      ) {
         let opts =
           type === "customer"
             ? data.customers.map((c) => [c.id, `${c.name} · ${c.code}`])
@@ -385,10 +512,23 @@ function openEditor(id = null) {
                   .map((p) => [p.id, `${p.serial} · ${p.code}`])
               : type === "serviceProduct"
                 ? data.products.map((p) => [p.id, `${p.serial} · ${p.code}`])
-                : choices.map((c) => [
-                    c,
-                    key === "category" ? `${c} · ${productCategories[c]}` : c,
-                  ]);
+                : type === "orderItem"
+                  ? data.orders.flatMap((o) =>
+                      o.items
+                        .filter(
+                          (i) =>
+                            (o.stage !== "취소" && i.delivered < i.quantity) ||
+                            i.id === row.orderItemId,
+                        )
+                        .map((i) => [
+                          i.id,
+                          `${o.number} · ${customer(o.customerId)?.name} · ${i.model} / ${i.specification || "사양 없음"} (남은 ${i.quantity - i.delivered}대)`,
+                        ]),
+                    )
+                  : choices.map((c) => [
+                      c,
+                      key === "category" ? `${c} · ${productCategories[c]}` : c,
+                    ]);
         control = `<select id="field-${key}" name="${key}" ${required ? "required" : ""}><option value="">선택해 주세요</option>${opts.map(([v, l]) => `<option value="${esc(v)}" ${row[key] === v || (!id && type === "select" && v === choices[0]) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
       } else if (type === "textarea")
         control = `<textarea id="field-${key}" name="${key}" ${required ? "required" : ""} maxlength="2000">${esc(row[key] || "")}</textarea>`;
@@ -403,6 +543,8 @@ function openEditor(id = null) {
         customerCodeAvailable
       )
         control = `<input id="field-code" name="code" value="${esc(row.code || "")}" placeholder="저장 시 자동 생성" readonly>`;
+      if (page === "orders" && key === "number")
+        control = `<input id="field-number" name="number" value="${esc(row.number || "")}" placeholder="저장 시 자동 생성" readonly>`;
       let help =
         type === "customer"
           ? "고객관리에서 등록한 고객을 선택하세요."
@@ -479,6 +621,31 @@ function openEditor(id = null) {
         : "저장 시 C0001부터 누적 번호를 생성합니다.";
     });
   }
+  if (page === "orders") {
+    $("#form-fields").insertAdjacentHTML(
+      "beforeend",
+      `<section class="wide order-lines"><div class="order-lines-heading"><h2>주문 품목</h2><button type="button" id="add-order-line" class="secondary">+ 품목 추가</button></div><p>모델명과 사양은 제품관리의 값과 동일하게 입력하세요. 출고 시 시리얼번호 1개당 1대가 집계됩니다.</p><div id="order-lines"></div></section>`,
+    );
+    for (const item of row.items || [
+      {
+        id: crypto.randomUUID(),
+        model: "",
+        specification: "",
+        quantity: 1,
+        delivered: 0,
+      },
+    ])
+      addOrderLine(item);
+    $("#add-order-line").addEventListener("click", () =>
+      addOrderLine({ id: crypto.randomUUID(), quantity: 1, delivered: 0 }),
+    );
+  }
+  if (page === "shipments" && $("#field-orderItemId")) {
+    $("#field-orderItemId").addEventListener("change", () =>
+      configureShipmentItem(false),
+    );
+    configureShipmentItem(true);
+  }
   $("#editor").showModal();
 }
 $("#record-form").addEventListener("submit", async (e) => {
@@ -488,7 +655,9 @@ $("#record-form").addEventListener("submit", async (e) => {
     const old = data[page].find((r) => r.id === editing);
     const record = { id: editing || crypto.randomUUID() };
     const form = new FormData(e.target);
-    for (const [key, , type, required] of schemas[page].fields) {
+    for (const [key, , type, required] of schemas[page].fields.filter(
+      (f) => f[2] !== "computed",
+    )) {
       record[key] = String(
         form.get(key) ??
           (key === "status" && old
@@ -568,6 +737,31 @@ $("#record-form").addEventListener("submit", async (e) => {
       if (!product(record.productId)) throw Error("제품을 먼저 등록해 주세요.");
       if (record.completed && record.completed < record.received)
         throw Error("완료일은 접수일 이후여야 합니다.");
+    }
+    if (page === "orders") {
+      if (record.due < record.received)
+        throw Error("납기일은 접수일 이후여야 합니다.");
+      record.items = [...document.querySelectorAll(".order-line")].map(
+        (el) => ({
+          id: el.dataset.id,
+          model: el.querySelector("[data-item=model]").value.trim(),
+          specification: el
+            .querySelector("[data-item=specification]")
+            .value.trim(),
+          quantity: Number(el.querySelector("[data-item=quantity]").value),
+        }),
+      );
+      if (
+        !record.items.length ||
+        record.items.some(
+          (i) =>
+            !i.model ||
+            !Number.isInteger(i.quantity) ||
+            i.quantity < 1 ||
+            i.quantity > 1000000,
+        )
+      )
+        throw Error("품목의 모델명과 올바른 수량을 입력해 주세요.");
     }
     const next = structuredClone(data);
     const index = next[page].findIndex((r) => r.id === record.id);
@@ -726,7 +920,13 @@ function showApp() {
 function showLogin() {
   authGeneration++;
   if ($("#editor").open) $("#editor").close();
-  data = { products: [], customers: [], shipments: [], service: [] };
+  data = {
+    products: [],
+    customers: [],
+    orders: [],
+    shipments: [],
+    service: [],
+  };
   $("#app-content").hidden = true;
   $("#login-screen").hidden = false;
   $("#login-password").value = "";
@@ -827,3 +1027,44 @@ $("#demo-button").addEventListener("click", () => {
     }
   }
 })();
+
+function addOrderLine(item) {
+  const line = document.createElement("div");
+  line.className = "order-line";
+  line.dataset.id = item.id;
+  line.innerHTML = `<label class="field">모델명<input data-item="model" value="${esc(item.model || "")}" required maxlength="200" ${item.delivered ? "readonly" : ""}></label><label class="field">사양<input data-item="specification" value="${esc(item.specification || "")}" maxlength="200" ${item.delivered ? "readonly" : ""}></label><label class="field">수량<input data-item="quantity" type="number" value="${item.quantity}" min="${Math.max(1, item.delivered || 0)}" max="1000000" step="1" required></label><div class="item-progress">출고 ${item.delivered || 0} / 남은 ${item.quantity - (item.delivered || 0)}</div><button type="button" class="danger remove-order-line" ${item.delivered ? "disabled" : ""}>삭제</button>`;
+  line.querySelector("[data-item=quantity]").addEventListener("input", (e) => {
+    line.querySelector(".item-progress").textContent =
+      `출고 ${item.delivered || 0} / 남은 ${Number(e.target.value) - (item.delivered || 0)}`;
+  });
+  line.querySelector("button").addEventListener("click", () => line.remove());
+  $("#order-lines").append(line);
+}
+function configureShipmentItem(initial) {
+  const link = linkedItem($("#field-orderItemId").value);
+  const current = $("#field-productId").value;
+  $("#field-name").readOnly = !!link;
+  if (link) {
+    $("#field-customerId").value = link.order.customerId;
+    $("#field-name").value = link.item.model;
+  }
+  const old = data.shipments.find((s) => s.id === editing);
+  const options = data.products.filter(
+    (p) =>
+      (status(p) === "재고" || p.id === old?.productId) &&
+      (!link ||
+        (p.code.trim().toLowerCase() === link.item.model.trim().toLowerCase() &&
+          (p.rail || "").trim().toLowerCase() ===
+            link.item.specification.trim().toLowerCase())),
+  );
+  $("#field-productId").innerHTML =
+    '<option value="">선택해 주세요</option>' +
+    options
+      .map(
+        (p) =>
+          `<option value="${esc(p.id)}">${esc(p.serial)} · ${esc(p.code)}</option>`,
+      )
+      .join("");
+  if (initial && options.some((p) => p.id === current))
+    $("#field-productId").value = current;
+}
