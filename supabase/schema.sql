@@ -36,10 +36,11 @@ create table public.shipments (
  date date not null,
  "customerId" uuid not null references public.customers(id) on delete restrict,
  name text not null check(length(btrim(name)) between 1 and 200),
- "productId" uuid not null unique references public.products(id) on delete restrict,
+ "productId" uuid unique references public.products(id) on delete restrict,
  notes text not null default '' check(length(notes)<=2000),
  version integer not null default 1 check(version>0)
 );
+alter table public.shipments add column quantity integer not null default 1 check(quantity between 1 and 1000000);
 create index shipments_customer on public.shipments("customerId");
 create table public.service (
  id uuid primary key,
@@ -50,6 +51,12 @@ create table public.service (
  action text not null default '' check(length(action)<=2000),
  owner text not null default '' check(length(owner)<=200),
  completed date,
+ "billingType" text not null default '미정' check("billingType" in ('미정','유상','무상')),
+ "chargeAmount" bigint not null default 0 check("chargeAmount" between 0 and 1000000000000),
+ "paidAmount" bigint not null default 0 check("paidAmount">=0 and "paidAmount"<="chargeAmount"),
+ "paidDate" date,
+ check("billingType"='유상' or ("chargeAmount"=0 and "paidAmount"=0 and "paidDate" is null)),
+ check(("paidAmount"=0 and "paidDate" is null) or ("paidAmount">0 and "paidDate" is not null)),
  version integer not null default 1 check(version>0),
  check(completed is null or completed >= received)
 );
@@ -93,6 +100,7 @@ create table if not exists public.order_items (
  id uuid primary key,
  "orderId" uuid not null references public.orders(id) on delete cascade,
  position integer not null,
+ tracking_mode text not null default 'serial' check(tracking_mode in ('serial','quantity')),
  model text not null check(length(btrim(model)) between 1 and 200),
  specification text not null default '' check(length(specification)<=200),
  quantity integer not null check(quantity between 1 and 1000000)
@@ -146,12 +154,13 @@ begin
   ids:=array_append(ids,iid);
   select * into old_item from public.order_items where id=iid;
   if old_item.id is not null and old_item."orderId"<>oid then raise exception 'INVALID_ORDER_ITEM'; end if;
-  select count(*) into shipped_count from public.shipments where "orderItemId"=iid;
+  select coalesce(sum(quantity),0) into shipped_count from public.shipments where "orderItemId"=iid;
   if shipped_count>coalesce((item->>'quantity')::integer,0) then raise exception 'ORDER_QUANTITY_BELOW_SHIPPED'; end if;
+  if shipped_count>0 and old_item.tracking_mode is distinct from coalesce(item->>'tracking_mode',old_item.tracking_mode) then raise exception 'ORDER_TRACKING_LOCKED'; end if;
   if shipped_count>0 and (old_item.model is distinct from btrim(item->>'model') or old_item.specification is distinct from btrim(coalesce(item->>'specification',''))) then raise exception 'ORDER_ITEM_LOCKED'; end if;
-  insert into public.order_items(id,"orderId",position,model,specification,quantity)
-  values(iid,oid,item_pos,btrim(item->>'model'),btrim(coalesce(item->>'specification','')),(item->>'quantity')::integer)
-  on conflict(id) do update set position=excluded.position,model=excluded.model,specification=excluded.specification,quantity=excluded.quantity;
+  insert into public.order_items(id,"orderId",position,tracking_mode,model,specification,quantity)
+  values(iid,oid,item_pos,coalesce(item->>'tracking_mode',old_item.tracking_mode,'serial'),btrim(item->>'model'),btrim(coalesce(item->>'specification','')),(item->>'quantity')::integer)
+  on conflict(id) do update set position=excluded.position,tracking_mode=excluded.tracking_mode,model=excluded.model,specification=excluded.specification,quantity=excluded.quantity;
  end loop;
  -- FK RESTRICT prevents deleting an item already used in shipments.
  delete from public.order_items where "orderId"=oid and not(id=any(ids));
@@ -165,17 +174,26 @@ language plpgsql security definer set search_path=pg_catalog,public
 as $$
 declare item public.order_items; parent public.orders; prod public.products; shipped_count integer;
 begin
- if new."orderItemId" is null then return new; end if;
+ if new.quantity is null or new.quantity<1 or new.quantity>1000000 then raise exception 'INVALID_SHIPMENT_QUANTITY'; end if;
+ if new."orderItemId" is null then
+  if new."productId" is null or new.quantity<>1 then raise exception 'SERIAL_SHIPMENT_REQUIRED'; end if;
+  return new;
+ end if;
  select * into item from public.order_items where id=new."orderItemId";
  if item.id is null then raise exception 'INVALID_ORDER_ITEM'; end if;
  select * into parent from public.orders where id=item."orderId";
  if parent.stage='취소' and (TG_OP='INSERT' or new."orderItemId" is distinct from old."orderItemId") then raise exception 'ORDER_CANCELLED'; end if;
  if parent."customerId"<>new."customerId" then raise exception 'ORDER_CUSTOMER_MISMATCH'; end if;
  if new.date<parent.received then raise exception 'ORDER_SHIPMENT_DATE'; end if;
+ if item.tracking_mode='serial' then
+  if new."productId" is null or new.quantity<>1 then raise exception 'SERIAL_SHIPMENT_REQUIRED'; end if;
+ else
+  if new."productId" is not null then raise exception 'QUANTITY_SHIPMENT_NO_SERIAL'; end if;
+ end if;
  select * into prod from public.products where id=new."productId";
- if lower(btrim(prod.code))<>lower(btrim(item.model)) or lower(btrim(prod.rail))<>lower(btrim(item.specification)) then raise exception 'ORDER_PRODUCT_MISMATCH'; end if;
- select count(*) into shipped_count from public.shipments where "orderItemId"=item.id and id<>new.id;
- if shipped_count>=item.quantity then raise exception 'ORDER_OVERSHIP'; end if;
+ if item.tracking_mode='serial' and (lower(btrim(prod.code))<>lower(btrim(item.model)) or lower(btrim(prod.rail))<>lower(btrim(item.specification))) then raise exception 'ORDER_PRODUCT_MISMATCH'; end if;
+ select coalesce(sum(quantity),0) into shipped_count from public.shipments where "orderItemId"=item.id and id<>new.id;
+ if shipped_count+new.quantity>item.quantity then raise exception 'ORDER_OVERSHIP'; end if;
  new.name:=item.model;
  return new;
 end $$;
@@ -201,11 +219,11 @@ declare member_role text;
 begin
  member_role:=public.flow_role();
  if member_role is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
- return jsonb_build_object('serial_auto',true,'serial_manual',true,'customer_code_auto',true,'orders_enabled',true,'role',member_role,'data',jsonb_build_object(
+ return jsonb_build_object('serial_auto',true,'serial_manual',true,'customer_code_auto',true,'orders_enabled',true,'quantity_management',true,'service_billing',true,'role',member_role,'data',jsonb_build_object(
   'products',coalesce((select jsonb_agg(to_jsonb(p) order by p.serial) from public.products p),'[]'::jsonb),
   'customers',coalesce((select jsonb_agg(to_jsonb(c) order by c.name) from public.customers c),'[]'::jsonb),
   'shipments',coalesce((select jsonb_agg(to_jsonb(s) order by s.date desc,s.id) from public.shipments s),'[]'::jsonb),
-  'orders',coalesce((select jsonb_agg(to_jsonb(o)||jsonb_build_object('items',coalesce((select jsonb_agg(to_jsonb(i)||jsonb_build_object('delivered',(select count(*) from public.shipments s where s."orderItemId"=i.id)) order by i.position) from public.order_items i where i."orderId"=o.id),'[]'::jsonb)) order by o.received desc,o.number desc) from public.orders o),'[]'::jsonb),
+  'orders',coalesce((select jsonb_agg(to_jsonb(o)||jsonb_build_object('items',coalesce((select jsonb_agg(to_jsonb(i)||jsonb_build_object('delivered',(select coalesce(sum(s.quantity),0) from public.shipments s where s."orderItemId"=i.id)) order by i.position) from public.order_items i where i."orderId"=o.id),'[]'::jsonb)) order by o.received desc,o.number desc) from public.orders o),'[]'::jsonb),
   'service',coalesce((select jsonb_agg(to_jsonb(s) order by s.received desc,s.id) from public.service s),'[]'::jsonb)
  ));
 end $$;
@@ -217,7 +235,7 @@ language plpgsql security definer set search_path = pg_catalog,public
 as $$
 declare
  record_id uuid; current_version integer; col_list text; assignments text; payload jsonb;
- existing_product uuid; prod public.products; cust public.customers;
+ existing_product uuid; prod public.products; cust public.customers; svc public.service;
 begin
  if public.flow_role() is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
  if p_table='orders' then return public.flow_save_order(p_record,p_expected_version); end if;
@@ -254,18 +272,31 @@ begin
    payload:=payload||jsonb_build_object('code',cust.code,'code_generated',cust.code_generated);
   end if;
  end if;
+ if p_table='service' then
+  if current_version is not null then select * into svc from public.service where id=record_id; end if;
+  payload:=payload||jsonb_build_object(
+   'billingType',case when payload?'billingType' then payload->'billingType' else to_jsonb(coalesce(svc."billingType",'미정')) end,
+   'chargeAmount',case when payload?'chargeAmount' then payload->'chargeAmount' else to_jsonb(coalesce(svc."chargeAmount",0)) end,
+   'paidAmount',case when payload?'paidAmount' then payload->'paidAmount' else to_jsonb(coalesce(svc."paidAmount",0)) end,
+   'paidDate',case when payload?'paidDate' then payload->'paidDate' else to_jsonb(svc."paidDate") end);
+  if payload->>'paidDate'='' then payload:=payload||jsonb_build_object('paidDate',null); end if;
+ end if;
  if p_table='service' and payload->>'completed'='' then payload:=payload||'{"completed":null}'::jsonb; end if;
  if p_table='shipments' then
   if not payload?'orderItemId' and current_version is not null then
    payload:=payload||jsonb_build_object('orderItemId',(select "orderItemId" from public.shipments where id=record_id));
   end if;
   if payload->>'orderItemId'='' then payload:=payload||jsonb_build_object('orderItemId',null); end if;
+  if payload->>'productId'='' then payload:=payload||jsonb_build_object('productId',null); end if;
+  if not payload?'quantity' then payload:=payload||jsonb_build_object('quantity',coalesce((select quantity from public.shipments where id=record_id),1)); end if;
+  if payload->>'productId' is not null then
   select * into prod from public.products where id=(payload->>'productId')::uuid for update;
   if prod.id is null then raise exception 'PRODUCT_MISSING' using errcode='23503'; end if;
   select "productId" into existing_product from public.shipments where id=record_id;
   if exists(select 1 from public.shipments where "productId"=prod.id and id<>record_id) or
      (prod.status<>'재고' and existing_product is distinct from prod.id) then raise exception 'ALREADY_SHIPPED'; end if;
   if (payload->>'date')::date < prod.production then raise exception 'SHIPMENT_DATE'; end if;
+  end if;
  end if;
  -- Column lists are read from allowlisted tables, never client-supplied SQL.
  select string_agg(format('%I',column_name),',' order by ordinal_position),

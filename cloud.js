@@ -48,6 +48,17 @@ window.FlowCloud = (() => {
   }
   function message(error, status) {
     const m = error?.message || error?.msg || error?.error_description || "";
+    const quantityErrors = {
+      INVALID_SHIPMENT_QUANTITY: "출고 수량은 1~1,000,000의 정수여야 합니다.",
+      SERIAL_SHIPMENT_REQUIRED:
+        "시리얼 관리 출고는 제품을 선택하고 수량 1로 등록하세요.",
+      QUANTITY_SHIPMENT_NO_SERIAL:
+        "수량 관리 출고에는 시리얼 제품을 연결하지 않습니다.",
+      ORDER_TRACKING_LOCKED:
+        "출고 이력이 있는 품목의 관리 방식은 변경할 수 없습니다.",
+    };
+    for (const [code, label] of Object.entries(quantityErrors))
+      if (m.includes(code)) return label;
     const orderErrors = {
       ORDER_ITEMS_REQUIRED: "수주에 품목을 1~100개 등록해 주세요.",
       INVALID_ORDER_ITEM: "수주 품목을 확인해 주세요.",

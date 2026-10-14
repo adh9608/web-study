@@ -66,6 +66,7 @@ const schemas = {
       ["customerId", "고객명", "customer", true],
       ["name", "제품명", "text", true],
       ["productId", "시리얼번호", "product", true],
+      ["quantity", "출고 수량", "number", true],
       ["notes", "비고", "textarea"],
     ],
   },
@@ -82,6 +83,12 @@ const schemas = {
       ["action", "조치", "textarea"],
       ["owner", "담당", "text"],
       ["completed", "완료일", "date"],
+      ["billingType", "유상/무상", "select", true, ["미정", "유상", "무상"]],
+      ["chargeAmount", "청구금액(원)", "number", false],
+      ["paidAmount", "입금액(원)", "number", false],
+      ["paidDate", "입금일", "date", false],
+      ["paymentStatus", "입금상태", "computed"],
+      ["outstanding", "미수금(원)", "computed"],
     ],
   },
 };
@@ -120,6 +127,14 @@ let serialAutoAvailable = false;
 let serialManualAvailable = false;
 let customerCodeAvailable = false;
 let ordersAvailable = false;
+let quantityAvailable = false;
+let billingAvailable = false;
+const billingKeys = new Set([
+  "billingType",
+  "chargeAmount",
+  "paidAmount",
+  "paidDate",
+]);
 const productCategories = { 0: "레일방제기", 1: "레일리프트", 2: "미스트" };
 function loadLocal() {
   storageFailed = false;
@@ -163,7 +178,7 @@ const today = () =>
   }).format(new Date());
 const product = (id) => data.products.find((p) => p.id === id);
 const customer = (id) => data.customers.find((c) => c.id === id);
-const shipped = (id) => data.shipments.some((s) => s.productId === id);
+const shipped = (id) => !!id && data.shipments.some((s) => s.productId === id);
 const status = (p) => (shipped(p.id) ? "출고" : p.status);
 const orderTotals = (o) => ({
   total: (o.items || []).reduce((n, i) => n + i.quantity, 0),
@@ -183,31 +198,62 @@ function linkedItem(id) {
   }
   return null;
 }
+function paymentStatus(row) {
+  const type = row.billingType || "미정",
+    charge = Number(row.chargeAmount || 0),
+    paid = Number(row.paidAmount || 0);
+  return type === "무상"
+    ? "해당 없음"
+    : type !== "유상"
+      ? "확인 필요"
+      : charge === 0
+        ? "청구예정"
+        : paid === 0
+          ? "미입금"
+          : paid < charge
+            ? "부분입금"
+            : "입금완료";
+}
 const value = (row, key) =>
-  page === "orders" && ["total", "delivered", "remaining"].includes(key)
-    ? orderTotals(row)[key]
-    : page === "orders" && key === "stage"
-      ? orderStage(row)
-      : key === "items_summary"
-        ? (row.items || [])
-            .map(
-              (i) =>
-                `${i.model}${i.specification?.trim() ? ` / ${i.specification}` :""} × ${i.quantity}`
-            )
-            .join("; ")
-        : key === "orderItemId"
-          ? linkedItem(row[key])
-            ? `${linkedItem(row[key]).order.number} · ${linkedItem(row[key]).item.model}`
-            : "—"
-          : key === "category"
-            ? productCategories[row[key]] || "미분류"
-            : key === "productId"
-              ? (product(row[key])?.serial ?? "삭제된 제품")
-              : key === "customerId"
-                ? (customer(row[key])?.name ?? "삭제된 고객")
-                : page === "products" && key === "status"
-                  ? status(row)
-                  : row[key];
+  key === "paymentStatus"
+    ? paymentStatus(row)
+    : key === "outstanding"
+      ? (
+          Number(row.chargeAmount || 0) - Number(row.paidAmount || 0)
+        ).toLocaleString("ko-KR")
+      : page === "service" && key === "billingType"
+        ? row.billingType || "미정"
+        : page === "service" && ["chargeAmount", "paidAmount"].includes(key)
+          ? Number(row[key] || 0).toLocaleString("ko-KR")
+          : page === "shipments" && key === "quantity"
+            ? row.quantity || 1
+            : page === "orders" &&
+                ["total", "delivered", "remaining"].includes(key)
+              ? orderTotals(row)[key]
+              : page === "orders" && key === "stage"
+                ? orderStage(row)
+                : key === "items_summary"
+                  ? (row.items || [])
+                      .map(
+                        (i) =>
+                          `${i.model}${i.specification?.trim() ? ` / ${i.specification}` : ""} × ${i.quantity}`,
+                      )
+                      .join("; ")
+                  : key === "orderItemId"
+                    ? linkedItem(row[key])
+                      ? `${linkedItem(row[key]).order.number} · ${linkedItem(row[key]).item.model}`
+                      : "—"
+                    : key === "category"
+                      ? productCategories[row[key]] || "미분류"
+                      : key === "productId"
+                        ? row[key]
+                          ? (product(row[key])?.serial ?? "삭제된 제품")
+                          : "시리얼 없음"
+                        : key === "customerId"
+                          ? (customer(row[key])?.name ?? "삭제된 고객")
+                          : page === "products" && key === "status"
+                            ? status(row)
+                            : row[key];
 function toast(message) {
   $("#toast").textContent = message;
   $("#toast").hidden = false;
@@ -227,6 +273,8 @@ function applySnapshot(snapshot) {
   serialManualAvailable = snapshot.serial_manual === true;
   customerCodeAvailable = snapshot.customer_code_auto === true;
   ordersAvailable = snapshot.orders_enabled === true;
+  quantityAvailable = snapshot.quantity_management === true;
+  billingAvailable = snapshot.service_billing === true;
   role = snapshot.role;
 }
 async function persist(next, record, old) {
@@ -262,6 +310,23 @@ function setBusy(value) {
     $("#field-category")
   )
     $("#field-category").disabled = true;
+  if (!value && page === "shipments" && $("#field-orderItemId"))
+    configureShipmentItem(true);
+  if (!value && page === "orders")
+    document.querySelectorAll(".order-line").forEach((el) => {
+      const item = data.orders
+        .find((o) => o.id === editing)
+        ?.items.find((i) => i.id === el.dataset.id);
+      if (item?.delivered)
+        el.querySelector("[data-item=tracking_mode]").disabled = true;
+    });
+  if (
+    !value &&
+    page === "service" &&
+    billingAvailable &&
+    $("#field-billingType")
+  )
+    syncServiceBilling();
 }
 function badge(v) {
   return `<span class="badge ${["재고", "합격", "완료"].includes(v) ? "green" : ["검사대기", "진행중"].includes(v) ? "amber" : ""}">${esc(v)}</span>`;
@@ -382,12 +447,17 @@ function rows() {
       (filter === "검사대기" ? r.inspection !== filter : status(r) !== filter)
     )
       return false;
-    if (
-      page === "service" &&
-      filter !== "전체" &&
-      (filter === "완료" ? !r.completed : !!r.completed)
-    )
-      return false;
+    if (page === "service" && filter !== "전체") {
+      if (filter === "완료" && !r.completed) return false;
+      if (filter === "진행중" && r.completed) return false;
+      if (["유상", "무상"].includes(filter) && r.billingType !== filter)
+        return false;
+      if (
+        ["미입금", "부분입금", "입금완료"].includes(filter) &&
+        paymentStatus(r) !== filter
+      )
+        return false;
+    }
     return (
       !q ||
       schemas[page].fields.some(([key]) =>
@@ -417,7 +487,16 @@ function render() {
     page === "products"
       ? ["전체", "재고", "출고", "검사대기"]
       : page === "service"
-        ? ["전체", "진행중", "완료"]
+        ? [
+            "전체",
+            "진행중",
+            "완료",
+            "유상",
+            "무상",
+            "미입금",
+            "부분입금",
+            "입금완료",
+          ]
         : page === "orders"
           ? ["전체", "접수", "생산중", "출고대기", "완료", "취소"]
           : ["전체"];
@@ -445,7 +524,7 @@ function renderTable() {
         s.fields
           .map(([key]) => {
             const v = value(r, key);
-            return `<td>${["status", "inspection", "stage"].includes(key) ? badge(v) : esc(v === 0 ? 0 : v || "—")}</td>`;
+            return `<td>${["status", "inspection", "stage", "paymentStatus"].includes(key) ? badge(v) : esc(v === 0 ? 0 : v || "—")}</td>`;
           })
           .join("") +
         (page === "service"
@@ -481,7 +560,11 @@ function openEditor(id = null) {
   $("#form-error").textContent = "";
   $("#delete-button").hidden = !id || (cloudMode && role !== "admin");
   $("#form-fields").innerHTML = s.fields
-    .filter((f) => f[2] !== "computed")
+    .filter(
+      (f) =>
+        f[2] !== "computed" &&
+        !(page === "service" && !billingAvailable && billingKeys.has(f[0])),
+    )
     .map(([key, label, type, required, choices]) => {
       let control;
       if (
@@ -533,7 +616,7 @@ function openEditor(id = null) {
       } else if (type === "textarea")
         control = `<textarea id="field-${key}" name="${key}" ${required ? "required" : ""} maxlength="2000">${esc(row[key] || "")}</textarea>`;
       else
-        control = `<input id="field-${key}" name="${key}" type="${type}" value="${esc(row[key] || (!id && type === "date" && key !== "completed" ? today() : ""))}" ${required ? "required" : ""} maxlength="200">`;
+        control = `<input id="field-${key}" name="${key}" type="${type}" value="${esc(row[key] || (!id && type === "date" && key !== "completed" && key !== "paidDate" ? today() : ""))}" ${required ? "required" : ""} maxlength="200">`;
       if (page === "products" && key === "serial")
         control = `<input id="field-serial" name="serial" value="${esc(row.serial || "")}" placeholder="저장 시 자동 생성" readonly>`;
       if (
@@ -545,6 +628,10 @@ function openEditor(id = null) {
         control = `<input id="field-code" name="code" value="${esc(row.code || "")}" placeholder="저장 시 자동 생성" readonly>`;
       if (page === "orders" && key === "number")
         control = `<input id="field-number" name="number" value="${esc(row.number || "")}" placeholder="저장 시 자동 생성" readonly>`;
+      if (page === "shipments" && key === "quantity")
+        control = `<input id="field-quantity" name="quantity" type="number" value="${row.quantity || 1}" min="1" max="1000000" step="1" required readonly>`;
+      if (page === "service" && ["chargeAmount", "paidAmount"].includes(key))
+        control = `<input id="field-${key}" name="${key}" type="number" value="${row[key] || 0}" min="0" max="1000000000000" step="1">`;
       let help =
         type === "customer"
           ? "고객관리에서 등록한 고객을 선택하세요."
@@ -624,7 +711,7 @@ function openEditor(id = null) {
   if (page === "orders") {
     $("#form-fields").insertAdjacentHTML(
       "beforeend",
-      `<section class="wide order-lines"><div class="order-lines-heading"><h2>주문 품목</h2><button type="button" id="add-order-line" class="secondary">+ 품목 추가</button></div><p>모델명과 사양은 제품관리의 값과 동일하게 입력하세요. 출고 시 시리얼번호 1개당 1대가 집계됩니다.</p><div id="order-lines"></div></section>`,
+      `<section class="wide order-lines"><div class="order-lines-heading"><h2>주문 품목</h2><button type="button" id="add-order-line" class="secondary">+ 품목 추가</button></div><p>모델명과 사양은 제품관리의 값과 동일하게 입력하세요. 시리얼 관리는 1번호당 1대, 수량 관리는 출고 수량으로 집계됩니다.</p><div id="order-lines"></div></section>`,
     );
     for (const item of row.items || [
       {
@@ -646,6 +733,19 @@ function openEditor(id = null) {
     );
     configureShipmentItem(true);
   }
+  if (page === "service" && billingAvailable) {
+    const billingLabel = $("#field-billingType").closest("label");
+    billingLabel.insertAdjacentHTML(
+      "beforebegin",
+      '<div class="form-section-title">비용·입금 정보</div>',
+    );
+    $("#form-fields").insertAdjacentHTML(
+      "beforeend",
+      '<p class="field wide billing-help">입금은 담당자가 확인 후 직접 입력합니다. 입금액은 누적 금액, 입금일은 최근 입금일입니다. 수리 완료와 입금 완료는 별도로 관리됩니다.</p>',
+    );
+    $("#field-billingType").addEventListener("change", syncServiceBilling);
+    syncServiceBilling();
+  }
   $("#editor").showModal();
 }
 $("#record-form").addEventListener("submit", async (e) => {
@@ -658,6 +758,8 @@ $("#record-form").addEventListener("submit", async (e) => {
     for (const [key, , type, required] of schemas[page].fields.filter(
       (f) => f[2] !== "computed",
     )) {
+      if (page === "service" && !billingAvailable && billingKeys.has(key))
+        continue;
       record[key] = String(
         form.get(key) ??
           (key === "status" && old
@@ -668,6 +770,12 @@ $("#record-form").addEventListener("submit", async (e) => {
       ).trim();
       if (
         required &&
+        !(
+          page === "shipments" &&
+          key === "productId" &&
+          linkedItem($("#field-orderItemId")?.value)?.item.tracking_mode ===
+            "quantity"
+        ) &&
         !(
           page === "customers" &&
           key === "code" &&
@@ -719,18 +827,56 @@ $("#record-form").addEventListener("submit", async (e) => {
       )
     )
       throw Error("이미 등록된 고객코드입니다.");
+    if (page === "service" && billingAvailable) {
+      record.chargeAmount = Number(record.chargeAmount || 0);
+      record.paidAmount = Number(record.paidAmount || 0);
+      if (
+        [record.chargeAmount, record.paidAmount].some(
+          (n) => !Number.isSafeInteger(n) || n < 0 || n > 1000000000000,
+        )
+      )
+        throw Error("금액은 0~1조 원 범위의 정수로 입력하세요.");
+      if (record.paidAmount > record.chargeAmount)
+        throw Error("입금액은 청구금액보다 클 수 없습니다.");
+      if (
+        record.billingType !== "유상" &&
+        (record.chargeAmount || record.paidAmount || record.paidDate)
+      )
+        throw Error("미정 또는 무상 건은 청구·입금 금액을 0으로 설정하세요.");
+      if (record.paidAmount > 0 && !record.paidDate)
+        throw Error("입금일을 입력해 주세요.");
+      if (record.paidAmount === 0) record.paidDate = "";
+    }
     if (page === "shipments") {
-      if (!customer(record.customerId) || !product(record.productId))
+      record.quantity = Number(record.quantity || 1);
+      const quantityMode =
+        linkedItem(record.orderItemId)?.item.tracking_mode === "quantity";
+      if (
+        !Number.isInteger(record.quantity) ||
+        record.quantity < 1 ||
+        record.quantity > 1000000
+      )
+        throw Error("출고 수량은 1~1,000,000의 정수로 입력하세요.");
+      if (quantityMode) {
+        record.productId = "";
+        if (!quantityAvailable)
+          throw Error("수량 관리 DB 업데이트가 필요합니다.");
+      }
+      if (
+        !customer(record.customerId) ||
+        (!quantityMode && !product(record.productId))
+      )
         throw Error("고객과 제품을 먼저 등록해 주세요.");
       if (
-        data.shipments.some(
+        !quantityMode &&
+        (data.shipments.some(
           (s) => s.id !== record.id && s.productId === record.productId,
         ) ||
-        ((!old || old.productId !== record.productId) &&
-          status(product(record.productId)) !== "재고")
+          ((!old || old.productId !== record.productId) &&
+            status(product(record.productId)) !== "재고"))
       )
         throw Error("이미 출고된 제품입니다.");
-      if (record.date < product(record.productId).production)
+      if (!quantityMode && record.date < product(record.productId).production)
         throw Error("출고일은 제품 생산일 이후여야 합니다.");
     }
     if (page === "service") {
@@ -744,6 +890,7 @@ $("#record-form").addEventListener("submit", async (e) => {
       record.items = [...document.querySelectorAll(".order-line")].map(
         (el) => ({
           id: el.dataset.id,
+          tracking_mode: el.querySelector("[data-item=tracking_mode]").value,
           model: el.querySelector("[data-item=model]").value.trim(),
           specification: el
             .querySelector("[data-item=specification]")
@@ -1032,7 +1179,7 @@ function addOrderLine(item) {
   const line = document.createElement("div");
   line.className = "order-line";
   line.dataset.id = item.id;
-  line.innerHTML = `<label class="field">모델명<input data-item="model" value="${esc(item.model || "")}" required maxlength="200" ${item.delivered ? "readonly" : ""}></label><label class="field">사양<input data-item="specification" value="${esc(item.specification || "")}" maxlength="200" ${item.delivered ? "readonly" : ""}></label><label class="field">수량<input data-item="quantity" type="number" value="${item.quantity}" min="${Math.max(1, item.delivered || 0)}" max="1000000" step="1" required></label><div class="item-progress">출고 ${item.delivered || 0} / 남은 ${item.quantity - (item.delivered || 0)}</div><button type="button" class="danger remove-order-line" ${item.delivered ? "disabled" : ""}>삭제</button>`;
+  line.innerHTML = `<label class="field item-tracking">관리 방식<select data-item="tracking_mode" ${item.delivered ? "disabled" : ""}><option value="serial" ${(item.tracking_mode || "serial") === "serial" ? "selected" : ""}>시리얼 관리</option><option value="quantity" ${item.tracking_mode === "quantity" ? "selected" : ""} ${quantityAvailable ? "" : "disabled"}>수량 관리${quantityAvailable ? "" : " (DB 업데이트 필요)"}</option></select></label><label class="field">모델명<input data-item="model" value="${esc(item.model || "")}" required maxlength="200" ${item.delivered ? "readonly" : ""}></label><label class="field">사양<input data-item="specification" value="${esc(item.specification || "")}" maxlength="200" ${item.delivered ? "readonly" : ""}></label><label class="field">수량<input data-item="quantity" type="number" value="${item.quantity}" min="${Math.max(1, item.delivered || 0)}" max="1000000" step="1" required></label><div class="item-progress">출고 ${item.delivered || 0} / 남은 ${item.quantity - (item.delivered || 0)}</div><button type="button" class="danger remove-order-line" ${item.delivered ? "disabled" : ""}>삭제</button>`;
   line.querySelector("[data-item=quantity]").addEventListener("input", (e) => {
     line.querySelector(".item-progress").textContent =
       `출고 ${item.delivered || 0} / 남은 ${Number(e.target.value) - (item.delivered || 0)}`;
@@ -1043,6 +1190,16 @@ function addOrderLine(item) {
 function configureShipmentItem(initial) {
   const link = linkedItem($("#field-orderItemId").value);
   const current = $("#field-productId").value;
+  const quantityMode = link?.item.tracking_mode === "quantity";
+  $("#field-productId").disabled = quantityMode;
+  $("#field-productId").required = !quantityMode;
+  $("#field-productId").closest(".field").hidden = quantityMode;
+  $("#field-quantity").readOnly = !quantityMode;
+  if (!quantityMode) $("#field-quantity").value = "1";
+  if (quantityMode) {
+    $("#field-productId").value = "";
+    if (!initial) $("#field-quantity").value = "1";
+  }
   $("#field-name").readOnly = !!link;
   if (link) {
     $("#field-customerId").value = link.order.customerId;
@@ -1065,6 +1222,15 @@ function configureShipmentItem(initial) {
           `<option value="${esc(p.id)}">${esc(p.serial)} · ${esc(p.code)}</option>`,
       )
       .join("");
-  if (initial && options.some((p) => p.id === current))
+  if (!quantityMode && initial && options.some((p) => p.id === current))
     $("#field-productId").value = current;
+}
+
+function syncServiceBilling() {
+  const paid = $("#field-billingType").value === "유상";
+  for (const key of ["chargeAmount", "paidAmount", "paidDate"]) {
+    const field = $("#field-" + key);
+    field.readOnly = !paid;
+    if (!paid) field.value = key === "paidDate" ? "" : "0";
+  }
 }
