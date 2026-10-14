@@ -49,7 +49,7 @@ const schemas = {
       ["category", "제품 구분", "select", true, ["0", "1", "2"]],
       ["code", "모델명", "text", true],
       ["production", "생산일", "date", true],
-      ["rail", "레일(사양)", "text"],
+      ["rail", "사양", "text"],
       ["inspection", "검사", "select", true, ["검사대기", "합격", "불합격"]],
       ["status", "상태", "select", true, ["재고", "출고"]],
       ["notes", "비고", "textarea"],
@@ -112,7 +112,7 @@ if (loginInput) {
   loginInput.minLength = 3;
   loginInput.maxLength = 32;
   loginInput.pattern = "[A-Za-z0-9][A-Za-z0-9_\\-]{2,31}";
-  loginInput.placeholder = "예: hong01";
+  loginInput.placeholder = "예: admin";
   const label = document.querySelector('label[for="' + loginInput.id + '"]');
   if (label?.firstChild?.nodeType === Node.TEXT_NODE)
     label.firstChild.textContent = "아이디";
