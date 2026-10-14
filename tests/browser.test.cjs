@@ -462,6 +462,87 @@ const { chromium } = require("playwright");
     path: "test-results/orders-mobile.png",
     fullPage: true,
   });
+
+  await mp.setViewportSize({ width: 1440, height: 1000 });
+  await nav(mp, "수주관리");
+  await mp.locator("#add-button").click();
+  await mp.locator("[name=received]").fill("2026-10-14");
+  await mp.locator("[name=due]").fill("2026-11-01");
+  await mp.locator("[name=customerId]").selectOption({ index: 1 });
+  await mp
+    .locator(".order-line [data-item=tracking_mode]")
+    .selectOption("quantity");
+  await mp.locator(".order-line [data-item=model]").fill("WELD-20");
+  await mp.locator(".order-line [data-item=quantity]").fill("20");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  for (const amount of [5, 16, 15]) {
+    await nav(mp, "출고관리");
+    await mp.locator("#add-button").click();
+    await mp.locator("[name=orderItemId]").selectOption({ index: 1 });
+    assert.equal(await mp.locator("[name=productId]").isVisible(), false);
+    assert.equal(
+      await mp.locator("[name=quantity]").evaluate((e) => e.readOnly),
+      false,
+    );
+    await mp.locator("[name=date]").fill("2026-10-14");
+    await mp.locator("[name=quantity]").fill(String(amount));
+    await mp.getByRole("button", { name: "저장하기" }).click();
+    if (amount === 16) {
+      await mp.locator("#form-error").filter({ hasText: "초과" }).waitFor();
+      await mp.locator("#cancel-dialog").click();
+      continue;
+    }
+    await mp.locator("#editor").waitFor({ state: "hidden" });
+    await nav(mp, "수주관리");
+    const row = mp.locator("tbody tr").filter({ hasText: "WELD-20" });
+    assert.equal(
+      await row.locator("td").nth(7).innerText(),
+      amount === 5 ? "5" : "20",
+    );
+    assert.equal(
+      await row.locator("td").nth(8).innerText(),
+      amount === 5 ? "15" : "0",
+    );
+  }
+  await nav(mp, "A/S");
+  await mp.locator("#add-button").click();
+  await mp.locator("[name=productId]").selectOption({ index: 1 });
+  await mp.locator("[name=model]").fill("BILLING-TEST");
+  await mp.locator("[name=received]").fill("2026-10-14");
+  await mp.locator("[name=symptom]").fill("비용 테스트");
+  await mp.locator("[name=billingType]").selectOption("유상");
+  await mp.locator("[name=chargeAmount]").fill("100000");
+  await mp.locator("[name=paidAmount]").fill("30000");
+  await mp.locator("[name=paidDate]").fill("2026-10-14");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  let bill = mp.locator("tbody tr").filter({ hasText: "BILLING-TEST" });
+  assert.match(await bill.innerText(), /부분입금/);
+  assert.match(await bill.innerText(), /70,000/);
+  assert.match(await bill.innerText(), /진행중/);
+  await mp.locator('[data-filter="부분입금"]').click();
+  assert.equal(await mp.locator("tbody tr").count(), 1);
+  await bill.locator("[data-edit]").click();
+  await mp.locator("[name=paidAmount]").fill("100000");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  assert.equal(await mp.locator("tbody tr").count(), 0);
+  await mp.locator('[data-filter="입금완료"]').click();
+  assert.match(await mp.locator("tbody").innerText(), /입금완료/);
+  await bill.locator("[data-edit]").click();
+  await mp.locator("[name=billingType]").selectOption("무상");
+  assert.equal(await mp.locator("[name=paidAmount]").inputValue(), "0");
+  assert.equal(await mp.locator("[name=paidDate]").inputValue(), "");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  await mp.locator('[data-filter="무상"]').click();
+  assert.match(await mp.locator("tbody").innerText(), /해당 없음/);
+  await nav(mp, "제품관리");
+  await mp.locator("#add-button").click();
+  assert.equal(await mp.locator("[name=status]").isDisabled(), false);
+  assert.equal(await mp.locator("[name=status]").inputValue(), "재고");
+  await mp.locator("#cancel-dialog").click();
   assert.deepEqual(errors, []);
   await b.close();
   await db.close();

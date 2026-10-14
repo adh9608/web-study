@@ -887,3 +887,21 @@ dialog::backdrop {
     min-width: 80px;
   }
 }
+
+.order-line .item-tracking {
+  grid-column: 1/-1;
+}
+
+.form-section-title {
+  grid-column: 1/-1;
+  font-weight: 650;
+  font-size: 14px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border);
+}
+.billing-help {
+  color: #8490a0;
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 0;
+}
