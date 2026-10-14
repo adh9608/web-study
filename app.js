@@ -2,6 +2,19 @@
 const $ = (s) => document.querySelector(s);
 const storageKey = "flow-operations-v1";
 const schemas = {
+  customers: {
+    title: "고객관리",
+    description: "고객 정보와 연락처를 한곳에서 확인하세요.",
+    singular: "고객",
+    icon: "♧",
+    fields: [
+      ["code", "고객코드", "text", true],
+      ["name", "고객명", "text", true],
+      ["address", "주소", "text"],
+      ["phone", "연락처", "tel"],
+      ["notes", "비고", "textarea"],
+    ],
+  },
   products: {
     title: "제품관리",
     description: "생산부터 출고까지, 제품의 모든 정보를 관리하세요.",
@@ -15,19 +28,6 @@ const schemas = {
       ["rail", "레일(사양)", "text"],
       ["inspection", "검사", "select", true, ["검사대기", "합격", "불합격"]],
       ["status", "상태", "select", true, ["재고", "출고"]],
-      ["notes", "비고", "textarea"],
-    ],
-  },
-  customers: {
-    title: "고객관리",
-    description: "고객 정보와 연락처를 한곳에서 확인하세요.",
-    singular: "고객",
-    icon: "♧",
-    fields: [
-      ["code", "고객코드", "text", true],
-      ["name", "고객명", "text", true],
-      ["address", "주소", "text"],
-      ["phone", "연락처", "tel"],
       ["notes", "비고", "textarea"],
     ],
   },
