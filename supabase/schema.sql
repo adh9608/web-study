@@ -247,8 +247,7 @@ begin
  select * into lot from public.manufacturing_lots where id=new."lotId";
  if lot.id is null then raise exception 'LOT_MISSING' using errcode='23503'; end if;
  if lot.status='마감' and (TG_OP='INSERT' or new."lotId" is distinct from old."lotId") then raise exception 'LOT_CLOSED'; end if;
- if lower(btrim(new.code))<>lower(btrim(lot.model)) or lower(btrim(new.rail))<>lower(btrim(lot.specification)) then raise exception 'LOT_PRODUCT_MISMATCH'; end if;
- if new.production<lot.started or (lot.ended is not null and new.production>lot.ended) then raise exception 'LOT_PRODUCTION_DATE'; end if;
+ if lower(btrim(new.code))<>lower(btrim(lot.model)) then raise exception 'LOT_PRODUCT_MISMATCH'; end if;
  return new;
 end $$;
 revoke all on function public.flow_validate_lot_product() from public,anon,authenticated;
@@ -260,7 +259,7 @@ language plpgsql security definer set search_path=pg_catalog,public
 as $$
 begin
  if new.code is distinct from old.code and exists(select 1 from public.products where "lotId"=old.id) then raise exception 'LOT_CODE_LOCKED'; end if;
- if exists(select 1 from public.products p where p."lotId"=old.id and (lower(btrim(p.code))<>lower(btrim(new.model)) or lower(btrim(p.rail))<>lower(btrim(new.specification)) or p.production<new.started or (new.ended is not null and p.production>new.ended))) then raise exception 'LOT_LINKED_PRODUCTS'; end if;
+ if exists(select 1 from public.products p where p."lotId"=old.id and lower(btrim(p.code))<>lower(btrim(new.model))) then raise exception 'LOT_LINKED_PRODUCTS'; end if;
  return new;
 end $$;
 revoke all on function public.flow_validate_lot_update() from public,anon,authenticated;

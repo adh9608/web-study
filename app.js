@@ -724,7 +724,7 @@ function openEditor(id = null) {
                 : "";
       if (type === "lot")
         help =
-          "모델명·레일 사양·생산일이 LOT와 일치해야 합니다. 마감 LOT에는 새 제품을 연결할 수 없습니다.";
+          "모델명만 LOT와 일치해야 합니다. 사양과 생산일은 연결 조건으로 검사하지 않습니다. 마감 LOT에는 새 제품을 연결할 수 없습니다.";
       if (page === "products" && key === "serial")
         help = id
           ? "등록된 시리얼번호는 변경되지 않습니다."

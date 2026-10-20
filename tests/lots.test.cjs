@@ -33,10 +33,7 @@ const { randomUUID } = require("node:crypto");
     [legacy],
   );
   const migration = fs.readFileSync(
-    path.join(
-      __dirname,
-      "../supabase/migrations/20261020_manufacturing_lots.sql",
-    ),
+    path.join(__dirname, "../supabase/migrations/20261020_lot_model_only.sql"),
     "utf8",
   );
   await db.exec(migration);
@@ -115,18 +112,24 @@ const { randomUUID } = require("node:crypto");
     save("lots", { ...lot, model: "OTHER" }, 1),
     /LOT_LINKED_PRODUCTS/,
   );
+
+  await save("products", { ...prod, id: randomUUID(), rail: "800mm" });
   await assert.rejects(
-    save("lots", { ...lot, started: "2026-10-21" }, 1),
-    /LOT_LINKED_PRODUCTS/,
-  );
-  await assert.rejects(
-    save("products", { ...prod, id: randomUUID(), rail: "800mm" }),
+    save("products", { ...prod, id: randomUUID(), code: "OTHER" }),
     /LOT_PRODUCT_MISMATCH/,
   );
-  await assert.rejects(
-    save("products", { ...prod, id: randomUUID(), production: "2026-10-19" }),
-    /LOT_PRODUCTION_DATE/,
-  );
+  await save("products", {
+    ...prod,
+    id: randomUUID(),
+    production: "2026-10-19",
+  });
+  await save("products", {
+    ...prod,
+    id: randomUUID(),
+    code: " hs-100 ",
+    production: "2026-11-01",
+    rail: "",
+  });
   await assert.rejects(remove(lid, 1), /foreign key/);
   await assert.rejects(remove(lid, 1, employee), /ADMIN_REQUIRED/);
   snapshot = await save("lots", { ...lot, status: "마감" }, 1);
@@ -158,6 +161,17 @@ const { randomUUID } = require("node:crypto");
       db.query("delete from manufacturing_lots"),
       /permission denied/,
     ),
+  );
+  await save(
+    "lots",
+    {
+      ...lot,
+      status: "마감",
+      specification: "changed",
+      started: "2026-11-01",
+      ended: "2026-11-02",
+    },
+    2,
   );
   await db.exec(migration);
   await db.exec(migration);

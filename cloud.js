@@ -51,11 +51,11 @@ window.FlowCloud = (() => {
     const lotErrors = {
       LOT_CLOSED:
         "마감 LOT에는 제품을 추가하거나 기존 연결을 변경할 수 없습니다.",
-      LOT_PRODUCT_MISMATCH: "제품의 모델명·사양이 LOT와 다릅니다.",
+      LOT_PRODUCT_MISMATCH: "제품의 모델명이 LOT와 다릅니다.",
       LOT_PRODUCTION_DATE: "제품 생산일이 LOT 생산 기간에 포함되어야 합니다.",
       LOT_CODE_LOCKED: "제품이 연결된 LOT 번호는 변경할 수 없습니다.",
       LOT_LINKED_PRODUCTS:
-        "연결된 제품과 맞지 않는 모델·사양·생산 기간으로 변경할 수 없습니다.",
+        "연결된 제품과 다른 모델명으로 변경할 수 없습니다.",
     };
     for (const [code, label] of Object.entries(lotErrors))
       if (m.includes(code)) return label;
