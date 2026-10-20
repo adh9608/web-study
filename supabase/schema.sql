@@ -212,6 +212,61 @@ revoke all on function public.flow_order_shipment_version() from public,anon,aut
 drop trigger if exists flow_order_version on public.shipments;
 create trigger flow_order_version after insert or update or delete on public.shipments for each row execute function public.flow_order_shipment_version();
 
+create table if not exists public.manufacturing_lots (
+ id uuid primary key,
+ code text not null check(length(btrim(code)) between 1 and 200),
+ model text not null check(length(btrim(model)) between 1 and 200),
+ specification text not null default '' check(length(specification)<=200),
+ started date not null,
+ ended date,
+ inspection text not null check(inspection in ('검사대기','합격','불합격')),
+ status text not null check(status in ('진행중','마감')),
+ notes text not null default '' check(length(notes)<=2000),
+ version integer not null default 1 check(version>0),
+ check(ended is null or ended>=started)
+);
+create unique index if not exists manufacturing_lots_code_unique on public.manufacturing_lots(lower(btrim(code)));
+alter table public.products add column if not exists "lotId" uuid references public.manufacturing_lots(id) on delete restrict;
+create index if not exists products_lot on public.products("lotId");
+alter table public.manufacturing_lots enable row level security;
+drop policy if exists staff_read on public.manufacturing_lots;
+create policy staff_read on public.manufacturing_lots for select to authenticated using((select public.flow_role()) in ('admin','employee'));
+revoke all on public.manufacturing_lots from anon,authenticated;
+grant select on public.manufacturing_lots to authenticated;
+
+create or replace function public.flow_validate_lot_product() returns trigger
+language plpgsql security definer set search_path=pg_catalog,public
+as $$
+declare lot public.manufacturing_lots; prior_status text;
+begin
+ if TG_OP='UPDATE' and new."lotId" is distinct from old."lotId" and old."lotId" is not null then
+  select status into prior_status from public.manufacturing_lots where id=old."lotId";
+  if prior_status='마감' then raise exception 'LOT_CLOSED'; end if;
+ end if;
+ if new."lotId" is null then return new; end if;
+ select * into lot from public.manufacturing_lots where id=new."lotId";
+ if lot.id is null then raise exception 'LOT_MISSING' using errcode='23503'; end if;
+ if lot.status='마감' and (TG_OP='INSERT' or new."lotId" is distinct from old."lotId") then raise exception 'LOT_CLOSED'; end if;
+ if lower(btrim(new.code))<>lower(btrim(lot.model)) or lower(btrim(new.rail))<>lower(btrim(lot.specification)) then raise exception 'LOT_PRODUCT_MISMATCH'; end if;
+ if new.production<lot.started or (lot.ended is not null and new.production>lot.ended) then raise exception 'LOT_PRODUCTION_DATE'; end if;
+ return new;
+end $$;
+revoke all on function public.flow_validate_lot_product() from public,anon,authenticated;
+drop trigger if exists flow_lot_product_guard on public.products;
+create trigger flow_lot_product_guard before insert or update on public.products for each row execute function public.flow_validate_lot_product();
+
+create or replace function public.flow_validate_lot_update() returns trigger
+language plpgsql security definer set search_path=pg_catalog,public
+as $$
+begin
+ if new.code is distinct from old.code and exists(select 1 from public.products where "lotId"=old.id) then raise exception 'LOT_CODE_LOCKED'; end if;
+ if exists(select 1 from public.products p where p."lotId"=old.id and (lower(btrim(p.code))<>lower(btrim(new.model)) or lower(btrim(p.rail))<>lower(btrim(new.specification)) or p.production<new.started or (new.ended is not null and p.production>new.ended))) then raise exception 'LOT_LINKED_PRODUCTS'; end if;
+ return new;
+end $$;
+revoke all on function public.flow_validate_lot_update() from public,anon,authenticated;
+drop trigger if exists flow_lot_update_guard on public.manufacturing_lots;
+create trigger flow_lot_update_guard before update on public.manufacturing_lots for each row execute function public.flow_validate_lot_update();
+
 create function public.flow_snapshot() returns jsonb
 language plpgsql security definer set search_path = pg_catalog,public
 as $$
@@ -219,7 +274,8 @@ declare member_role text;
 begin
  member_role:=public.flow_role();
  if member_role is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
- return jsonb_build_object('serial_auto',true,'serial_manual',true,'customer_code_auto',true,'orders_enabled',true,'quantity_management',true,'service_billing',true,'role',member_role,'data',jsonb_build_object(
+ return jsonb_build_object('serial_auto',true,'serial_manual',true,'customer_code_auto',true,'orders_enabled',true,'quantity_management',true,'service_billing',true,'manufacturing_lots',true,'role',member_role,'data',jsonb_build_object(
+  'lots',coalesce((select jsonb_agg(to_jsonb(l) order by l.started desc,l.code) from public.manufacturing_lots l),'[]'::jsonb),
   'products',coalesce((select jsonb_agg(to_jsonb(p) order by p.serial) from public.products p),'[]'::jsonb),
   'customers',coalesce((select jsonb_agg(to_jsonb(c) order by c.name) from public.customers c),'[]'::jsonb),
   'shipments',coalesce((select jsonb_agg(to_jsonb(s) order by s.date desc,s.id) from public.shipments s),'[]'::jsonb),
@@ -238,8 +294,9 @@ declare
  existing_product uuid; prod public.products; cust public.customers; svc public.service;
 begin
  if public.flow_role() is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
+ if p_table='lots' then p_table:='manufacturing_lots'; end if;
  if p_table='orders' then return public.flow_save_order(p_record,p_expected_version); end if;
- if p_table not in ('products','customers','shipments','service') or p_table is null then raise exception 'INVALID_TABLE'; end if;
+ if p_table not in ('products','customers','shipments','service','manufacturing_lots') or p_table is null then raise exception 'INVALID_TABLE'; end if;
  -- All application writes share a transaction lock: stock checks and writes stay atomic.
  perform pg_advisory_xact_lock(83421671);
  record_id:=(p_record->>'id')::uuid;
@@ -250,7 +307,10 @@ begin
   raise exception 'STALE_RECORD';
  end if;
  payload:=p_record||jsonb_build_object('version',coalesce(current_version,0)+1);
+ if p_table='manufacturing_lots' and payload->>'ended'='' then payload:=payload||jsonb_build_object('ended',null); end if;
  if p_table='products' then
+  if not payload?'lotId' and current_version is not null then payload:=payload||jsonb_build_object('lotId',(select "lotId" from public.products where id=record_id)); end if;
+  if payload->>'lotId'='' then payload:=payload||jsonb_build_object('lotId',null); end if;
   if current_version is null then
    if coalesce(p_record->>'serial_mode','auto') not in ('auto','manual') then raise exception 'INVALID_SERIAL_MODE'; end if;
    payload:=payload||jsonb_build_object('serial',case when p_record->>'serial_mode'='manual' then btrim(coalesce(p_record->>'serial','')) else '' end,'serial_generated',coalesce(p_record->>'serial_mode','auto')<>'manual');
@@ -325,7 +385,8 @@ as $$
 declare current_version integer;
 begin
  if public.flow_role() is distinct from 'admin' then raise exception 'ADMIN_REQUIRED' using errcode='42501'; end if;
- if p_table not in ('products','customers','shipments','service','orders') or p_table is null then raise exception 'INVALID_TABLE'; end if;
+ if p_table='lots' then p_table:='manufacturing_lots'; end if;
+ if p_table not in ('products','customers','shipments','service','orders','manufacturing_lots') or p_table is null then raise exception 'INVALID_TABLE'; end if;
  perform pg_advisory_xact_lock(83421671);
  execute format('select version from public.%I where id=$1 for update',p_table) into current_version using p_id;
  if current_version is null or current_version is distinct from p_expected_version then raise exception 'STALE_RECORD'; end if;

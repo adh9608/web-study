@@ -200,7 +200,9 @@ const { chromium } = require("playwright");
   assert.match(await ep.locator("tbody").innerText(), /출고/);
   await nav(ep, "A/S");
   await ep.locator("#add-button").click();
-  await ep.locator("[name=productId]").selectOption({ index: 1 });
+  await ep.locator("#service-product-search").click();
+  await ep.locator("#service-product-results [role=option]").first().click();
+  await ep.locator("[name=received]").fill("2026-10-13");
   await ep.locator("[name=model]").fill("RAIL-100");
   await ep.locator("[name=symptom]").fill("점검 요청");
   await ep.getByRole("button", { name: "저장하기" }).click();
@@ -507,7 +509,8 @@ const { chromium } = require("playwright");
   }
   await nav(mp, "A/S");
   await mp.locator("#add-button").click();
-  await mp.locator("[name=productId]").selectOption({ index: 1 });
+  await mp.locator("#service-product-search").click();
+  await mp.locator("#service-product-results [role=option]").first().click();
   await mp.locator("[name=model]").fill("BILLING-TEST");
   await mp.locator("[name=received]").fill("2026-10-14");
   await mp.locator("[name=symptom]").fill("비용 테스트");
@@ -542,6 +545,127 @@ const { chromium } = require("playwright");
   await mp.locator("#add-button").click();
   assert.equal(await mp.locator("[name=status]").isDisabled(), false);
   assert.equal(await mp.locator("[name=status]").inputValue(), "재고");
+  await mp.locator("#cancel-dialog").click();
+
+  await nav(mp, "제조 LOT");
+  await add(mp, {
+    code: "LOT-20261020-01",
+    model: "LOT-MODEL",
+    specification: "500mm",
+    started: "2026-10-20",
+    ended: "2026-10-22",
+  });
+  await nav(mp, "제품관리");
+  await mp.locator("#add-button").click();
+  await mp.locator("[name=category]").selectOption("0");
+  await mp.locator("[name=code]").fill("LOT-MODEL");
+  await mp.locator("[name=rail]").fill("500mm");
+  await mp.locator("[name=production]").fill("2026-10-20");
+  await mp.locator("[name=lotId]").selectOption({ index: 1 });
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  const lotProduct = mp.locator("tbody tr").filter({ hasText: "LOT-MODEL" });
+  const lotSerial = await lotProduct.locator("td").first().innerText();
+  await nav(mp, "출고관리");
+  await mp.locator("#add-button").click();
+  await mp.locator("[name=customerId]").selectOption({ index: 1 });
+  await mp.locator("[name=date]").fill("2026-10-20");
+  await mp.locator("[name=name]").fill("LOT-MODEL");
+  await mp
+    .locator("[name=productId]")
+    .selectOption({ label: lotSerial + " · LOT-MODEL" });
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  await nav(mp, "A/S");
+  await mp.locator("#add-button").click();
+  await mp.locator("#service-product-search").fill("LOT-20261020-01");
+  assert.equal(
+    await mp.locator("#service-product-results [role=option]").count(),
+    1,
+  );
+  await mp.locator("#service-product-search").press("ArrowDown");
+  await mp.locator("#service-product-search").press("Enter");
+  assert.equal(
+    await mp.locator("#service-product-search").inputValue(),
+    lotSerial,
+  );
+  assert.equal(await mp.locator("[name=model]").inputValue(), "LOT-MODEL");
+  await mp.locator("#service-product-search").fill("NOT-A-SERIAL");
+  assert.match(
+    await mp.locator("#service-product-results").innerText(),
+    /검색 결과가 없습니다/,
+  );
+  assert.equal(await mp.locator("[name=productId]").inputValue(), "");
+  await mp
+    .locator("#service-product-search")
+    .fill(lotSerial.toLowerCase().slice(-8));
+  await mp.locator("#service-product-results [role=option]").first().click();
+  await mp.locator("[name=received]").fill("2026-10-20");
+  await mp.locator("[name=symptom]").fill("LOT 점검");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  assert.match(await mp.locator("tbody").innerText(), /LOT 점검/);
+  await nav(mp, "제조 LOT");
+  await mp.locator("[data-edit]").click();
+  assert.match(await mp.locator(".lot-history").innerText(), /LOT 점검/);
+  assert.match(await mp.locator(".lot-history").innerText(), /LOT-MODEL/);
+  assert.match(
+    await mp.locator(".lot-history").innerText(),
+    new RegExp(lotSerial),
+  );
+  await mp.locator("[name=status]").selectOption("마감");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  await nav(mp, "제품관리");
+  await mp.locator("#add-button").click();
+  assert.equal(await mp.locator("[name=lotId] option").count(), 1);
+  await mp.locator("#cancel-dialog").click();
+  await mp.setViewportSize({ width: 390, height: 844 });
+  await nav(mp, "A/S");
+  await mp.locator("#add-button").click();
+  await mp.locator("#service-product-search").fill("LOT-MODEL");
+  assert.equal(
+    await mp.locator("#service-product-results [role=option]").count(),
+    1,
+  );
+  await mp.screenshot({
+    path: "test-results/lot-serial-search-mobile.png",
+    fullPage: true,
+  });
+  assert.equal(
+    await mp.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    true,
+  );
+  await mp.locator("#cancel-dialog").click();
+  for (let n = 1; n <= 25; n++)
+    await db.query(
+      "insert into products(id,serial,code,production,category,serial_generated,rail,inspection,status,notes) values($1,$2,'BULK-MODEL','2026-10-20','0',false,'','합격','재고','')",
+      [
+        require("node:crypto").randomUUID(),
+        `BULK-${String(n).padStart(4, "0")}`,
+      ],
+    );
+  await mp.locator("#refresh-button").click();
+  await mp.waitForFunction(()=>!document.querySelector("#refresh-button").disabled);
+  await nav(mp, "A/S");
+  await mp.locator("#add-button").click();
+  await mp.locator("#service-product-search").fill("BULK-");
+  assert.equal(
+    await mp.locator("#service-product-results [role=option]").count(),
+    20,
+  );
+  assert.match(
+    await mp.locator("#service-product-results").innerText(),
+    /25개 중 20개/,
+  );
+  await mp.locator("#service-product-search").fill("BULK-NO-MATCH");
+  await mp.locator("[name=model]").fill("BULK-MODEL");
+  await mp.locator("[name=symptom]").fill("선택 검증");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp
+    .locator("#form-error")
+    .filter({ hasText: "검색 결과에서" })
+    .waitFor();
   await mp.locator("#cancel-dialog").click();
   assert.deepEqual(errors, []);
   await b.close();

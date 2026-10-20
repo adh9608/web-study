@@ -905,3 +905,79 @@ dialog::backdrop {
   line-height: 1.8;
   margin: 0;
 }
+
+.lot-history {
+  grid-column: 1/-1;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+.lot-history h3 {
+  font-size: 12px;
+  margin: 20px 0 8px;
+}
+.lot-history p,
+.lot-history li {
+  font-size: 12px;
+  color: #6e7b8d;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.lot-history ul {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 220px;
+  overflow: auto;
+}
+.serial-picker {
+  position: relative;
+}
+#service-product-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  background: white;
+  border: 1px solid #dce6e2;
+  border-radius: 7px;
+  box-shadow: 0 8px 22px #182d3920;
+  max-height: 260px;
+  overflow: auto;
+}
+#service-product-results button {
+  display: block;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: white;
+  width: 100%;
+  text-align: left;
+  padding: 12px;
+  color: #2c4456;
+}
+#service-product-results button:hover,
+#service-product-results button[aria-selected="true"] {
+  background: #e9f6ef;
+}
+#service-product-results button strong {
+  font-size: 12px;
+  display: block;
+}
+#service-product-results button span,
+#service-product-results p {
+  display: block;
+  font-size: 11px;
+  color: #80909e;
+  margin-top: 5px;
+  line-height: 1.6;
+}
+#service-product-results p {
+  padding: 10px;
+}
+#selected-service-product {
+  display: block;
+  line-height: 1.6;
+  color: #16886a;
+}
+.serial-picker input {
+  min-width: 0;
+}

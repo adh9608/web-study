@@ -48,6 +48,17 @@ window.FlowCloud = (() => {
   }
   function message(error, status) {
     const m = error?.message || error?.msg || error?.error_description || "";
+    const lotErrors = {
+      LOT_CLOSED:
+        "마감 LOT에는 제품을 추가하거나 기존 연결을 변경할 수 없습니다.",
+      LOT_PRODUCT_MISMATCH: "제품의 모델명·사양이 LOT와 다릅니다.",
+      LOT_PRODUCTION_DATE: "제품 생산일이 LOT 생산 기간에 포함되어야 합니다.",
+      LOT_CODE_LOCKED: "제품이 연결된 LOT 번호는 변경할 수 없습니다.",
+      LOT_LINKED_PRODUCTS:
+        "연결된 제품과 맞지 않는 모델·사양·생산 기간으로 변경할 수 없습니다.",
+    };
+    for (const [code, label] of Object.entries(lotErrors))
+      if (m.includes(code)) return label;
     const quantityErrors = {
       INVALID_SHIPMENT_QUANTITY: "출고 수량은 1~1,000,000의 정수여야 합니다.",
       SERIAL_SHIPMENT_REQUIRED:
