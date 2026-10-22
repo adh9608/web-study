@@ -981,3 +981,13 @@ dialog::backdrop {
 .serial-picker input {
   min-width: 0;
 }
+
+.production-unknown-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.production-unknown-toggle input {
+  width: auto;
+  margin: 0;
+}

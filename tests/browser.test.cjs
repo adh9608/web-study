@@ -646,7 +646,9 @@ const { chromium } = require("playwright");
       ],
     );
   await mp.locator("#refresh-button").click();
-  await mp.waitForFunction(()=>!document.querySelector("#refresh-button").disabled);
+  await mp.waitForFunction(
+    () => !document.querySelector("#refresh-button").disabled,
+  );
   await nav(mp, "A/S");
   await mp.locator("#add-button").click();
   await mp.locator("#service-product-search").fill("BULK-");
@@ -666,6 +668,41 @@ const { chromium } = require("playwright");
     .locator("#form-error")
     .filter({ hasText: "검색 결과에서" })
     .waitFor();
+  await mp.locator("#cancel-dialog").click();
+
+  await nav(mp, "제품관리");
+  await mp.locator("#add-button").click();
+  assert.equal(await mp.locator("#production-unknown").isDisabled(), true);
+  await mp.locator("#serial-mode").selectOption("manual");
+  await mp.locator("#production-unknown").check();
+  assert.equal(await mp.locator("[name=production]").isDisabled(), true);
+  assert.equal(await mp.locator("[name=production]").inputValue(), "");
+  await mp.locator("[name=serial]").fill("BEFORE-SYSTEM-001");
+  await mp.locator("[name=code]").fill("LEGACY-MODEL");
+  await mp.locator("[name=notes]").fill("시스템 도입 전 생산 제품");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  let legacyProduct = mp
+    .locator("tbody tr")
+    .filter({ hasText: "BEFORE-SYSTEM-001" });
+  assert.match(await legacyProduct.innerText(), /미상/);
+  await legacyProduct.locator("[data-edit]").click();
+  assert.equal(await mp.locator("#production-unknown").isChecked(), true);
+  await mp.locator("#production-unknown").uncheck();
+  await mp.locator("[name=production]").fill("2019-01-01");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  assert.match(await legacyProduct.innerText(), /2019-01-01/);
+  await mp.locator("#add-button").click();
+  await mp.locator("#serial-mode").selectOption("manual");
+  await mp.locator("#production-unknown").check();
+  await mp.locator("#serial-mode").selectOption("auto");
+  assert.equal(await mp.locator("#production-unknown").isChecked(), false);
+  assert.equal(
+    await mp.locator("[name=production]").evaluate((e) => e.required),
+    true,
+  );
+  assert.equal(await mp.locator("[name=production]").isDisabled(), false);
   await mp.locator("#cancel-dialog").click();
   assert.deepEqual(errors, []);
   await b.close();

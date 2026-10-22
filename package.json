@@ -4,7 +4,7 @@
   "private": true,
   "description": "Static FLOW frontend; dependencies are for tests only",
   "scripts": {
-    "test": "node tests/db.test.cjs && node tests/serial.test.cjs && node tests/manual-serial.test.cjs && node tests/customer-codes.test.cjs && node tests/orders.test.cjs && node tests/quantity-billing.test.cjs && node tests/lots.test.cjs",
+    "test": "node tests/db.test.cjs && node tests/serial.test.cjs && node tests/manual-serial.test.cjs && node tests/customer-codes.test.cjs && node tests/orders.test.cjs && node tests/quantity-billing.test.cjs && node tests/lots.test.cjs && node tests/unknown-production.test.cjs",
     "test:browser": "node tests/browser.test.cjs"
   },
   "devDependencies": {

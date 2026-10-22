@@ -10,9 +10,10 @@ create table public.products (
  id uuid primary key,
  serial text not null check (length(btrim(serial)) between 1 and 200),
  code text not null check (length(btrim(code)) between 1 and 200),
- production date not null,
+ production date,
  category text check(category in ('0','1','2')),
  serial_generated boolean not null default false,
+ constraint products_auto_production_required check(not serial_generated or production is not null),
  rail text not null default '' check(length(rail)<=200),
  inspection text not null check (inspection in ('검사대기','합격','불합격')),
  status text not null check (status in ('재고','출고')),
@@ -273,7 +274,7 @@ declare member_role text;
 begin
  member_role:=public.flow_role();
  if member_role is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
- return jsonb_build_object('serial_auto',true,'serial_manual',true,'customer_code_auto',true,'orders_enabled',true,'quantity_management',true,'service_billing',true,'manufacturing_lots',true,'role',member_role,'data',jsonb_build_object(
+ return jsonb_build_object('serial_auto',true,'serial_manual',true,'customer_code_auto',true,'orders_enabled',true,'quantity_management',true,'service_billing',true,'manufacturing_lots',true,'production_unknown',true,'role',member_role,'data',jsonb_build_object(
   'lots',coalesce((select jsonb_agg(to_jsonb(l) order by l.started desc,l.code) from public.manufacturing_lots l),'[]'::jsonb),
   'products',coalesce((select jsonb_agg(to_jsonb(p) order by p.serial) from public.products p),'[]'::jsonb),
   'customers',coalesce((select jsonb_agg(to_jsonb(c) order by c.name) from public.customers c),'[]'::jsonb),
@@ -308,6 +309,8 @@ begin
  payload:=p_record||jsonb_build_object('version',coalesce(current_version,0)+1);
  if p_table='manufacturing_lots' and payload->>'ended'='' then payload:=payload||jsonb_build_object('ended',null); end if;
  if p_table='products' then
+  if not payload?'production' and current_version is not null then payload:=payload||jsonb_build_object('production',(select production from public.products where id=record_id)); end if;
+  if payload->>'production'='' then payload:=payload||jsonb_build_object('production',null); end if;
   if not payload?'lotId' and current_version is not null then payload:=payload||jsonb_build_object('lotId',(select "lotId" from public.products where id=record_id)); end if;
   if payload->>'lotId'='' then payload:=payload||jsonb_build_object('lotId',null); end if;
   if current_version is null then
@@ -423,7 +426,6 @@ begin
   return new;
  end if;
  if new.category is null or new.category not in ('0','1','2') then raise exception 'PRODUCT_CATEGORY_REQUIRED'; end if;
- if new.production is null then raise exception 'PRODUCTION_REQUIRED'; end if;
  if not new.serial_generated then
   new.serial:=btrim(new.serial);
   if new.serial is null or new.serial='' then raise exception 'MANUAL_SERIAL_REQUIRED'; end if;
@@ -433,6 +435,7 @@ begin
   end if;
   return new;
  end if;
+ if new.production is null then raise exception 'PRODUCTION_REQUIRED'; end if;
  loop
   update public.flow_serial_counters set last_number=last_number+1 where category=new.category returning last_number into seq;
   if seq is null then raise exception 'SERIAL_COUNTER_MISSING'; end if;

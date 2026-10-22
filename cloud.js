@@ -48,14 +48,15 @@ window.FlowCloud = (() => {
   }
   function message(error, status) {
     const m = error?.message || error?.msg || error?.error_description || "";
+    if (m.includes("PRODUCTION_REQUIRED"))
+      return "자동 시리얼 생성에는 실제 생산일이 필요합니다.";
     const lotErrors = {
       LOT_CLOSED:
         "마감 LOT에는 제품을 추가하거나 기존 연결을 변경할 수 없습니다.",
       LOT_PRODUCT_MISMATCH: "제품의 모델명이 LOT와 다릅니다.",
       LOT_PRODUCTION_DATE: "제품 생산일이 LOT 생산 기간에 포함되어야 합니다.",
       LOT_CODE_LOCKED: "제품이 연결된 LOT 번호는 변경할 수 없습니다.",
-      LOT_LINKED_PRODUCTS:
-        "연결된 제품과 다른 모델명으로 변경할 수 없습니다.",
+      LOT_LINKED_PRODUCTS: "연결된 제품과 다른 모델명으로 변경할 수 없습니다.",
     };
     for (const [code, label] of Object.entries(lotErrors))
       if (m.includes(code)) return label;
