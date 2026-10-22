@@ -34,7 +34,7 @@ create table public.customers (
 create unique index customers_code_unique on public.customers (lower(btrim(code)));
 create table public.shipments (
  id uuid primary key,
- date date not null,
+ date date,
  "customerId" uuid not null references public.customers(id) on delete restrict,
  name text not null check(length(btrim(name)) between 1 and 200),
  "productId" uuid unique references public.products(id) on delete restrict,
@@ -185,7 +185,7 @@ begin
  select * into parent from public.orders where id=item."orderId";
  if parent.stage='취소' and (TG_OP='INSERT' or new."orderItemId" is distinct from old."orderItemId") then raise exception 'ORDER_CANCELLED'; end if;
  if parent."customerId"<>new."customerId" then raise exception 'ORDER_CUSTOMER_MISMATCH'; end if;
- if new.date<parent.received then raise exception 'ORDER_SHIPMENT_DATE'; end if;
+ if new.date is not null and new.date<parent.received then raise exception 'ORDER_SHIPMENT_DATE'; end if;
  if item.tracking_mode='serial' then
   if new."productId" is null or new.quantity<>1 then raise exception 'SERIAL_SHIPMENT_REQUIRED'; end if;
  else
@@ -274,11 +274,11 @@ declare member_role text;
 begin
  member_role:=public.flow_role();
  if member_role is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
- return jsonb_build_object('serial_auto',true,'serial_manual',true,'customer_code_auto',true,'orders_enabled',true,'quantity_management',true,'service_billing',true,'manufacturing_lots',true,'production_unknown',true,'role',member_role,'data',jsonb_build_object(
+ return jsonb_build_object('serial_auto',true,'serial_manual',true,'customer_code_auto',true,'orders_enabled',true,'quantity_management',true,'service_billing',true,'manufacturing_lots',true,'production_unknown',true,'shipment_date_unknown',true,'role',member_role,'data',jsonb_build_object(
   'lots',coalesce((select jsonb_agg(to_jsonb(l) order by l.started desc,l.code) from public.manufacturing_lots l),'[]'::jsonb),
   'products',coalesce((select jsonb_agg(to_jsonb(p) order by p.serial) from public.products p),'[]'::jsonb),
   'customers',coalesce((select jsonb_agg(to_jsonb(c) order by c.name) from public.customers c),'[]'::jsonb),
-  'shipments',coalesce((select jsonb_agg(to_jsonb(s) order by s.date desc,s.id) from public.shipments s),'[]'::jsonb),
+  'shipments',coalesce((select jsonb_agg(to_jsonb(s) order by s.date desc nulls last,s.id) from public.shipments s),'[]'::jsonb),
   'orders',coalesce((select jsonb_agg(to_jsonb(o)||jsonb_build_object('items',coalesce((select jsonb_agg(to_jsonb(i)||jsonb_build_object('delivered',(select coalesce(sum(s.quantity),0) from public.shipments s where s."orderItemId"=i.id)) order by i.position) from public.order_items i where i."orderId"=o.id),'[]'::jsonb)) order by o.received desc,o.number desc) from public.orders o),'[]'::jsonb),
   'service',coalesce((select jsonb_agg(to_jsonb(s) order by s.received desc,s.id) from public.service s),'[]'::jsonb)
  ));
@@ -345,6 +345,8 @@ begin
  end if;
  if p_table='service' and payload->>'completed'='' then payload:=payload||'{"completed":null}'::jsonb; end if;
  if p_table='shipments' then
+  if not payload?'date' and current_version is not null then payload:=payload||jsonb_build_object('date',(select date from public.shipments where id=record_id)); end if;
+  if payload->>'date'='' then payload:=payload||jsonb_build_object('date',null); end if;
   if not payload?'orderItemId' and current_version is not null then
    payload:=payload||jsonb_build_object('orderItemId',(select "orderItemId" from public.shipments where id=record_id));
   end if;
@@ -357,7 +359,7 @@ begin
   select "productId" into existing_product from public.shipments where id=record_id;
   if exists(select 1 from public.shipments where "productId"=prod.id and id<>record_id) or
      (prod.status<>'재고' and existing_product is distinct from prod.id) then raise exception 'ALREADY_SHIPPED'; end if;
-  if (payload->>'date')::date < prod.production then raise exception 'SHIPMENT_DATE'; end if;
+  if payload->>'date' is not null and prod.production is not null and (payload->>'date')::date < prod.production then raise exception 'SHIPMENT_DATE'; end if;
   end if;
  end if;
  -- Column lists are read from allowlisted tables, never client-supplied SQL.

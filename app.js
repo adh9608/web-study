@@ -152,6 +152,7 @@ let quantityAvailable = false;
 let billingAvailable = false;
 let lotsAvailable = false;
 let unknownProductionAvailable = false;
+let unknownShipmentAvailable = false;
 const billingKeys = new Set([
   "billingType",
   "chargeAmount",
@@ -248,58 +249,61 @@ const lotServices = (id) => {
   return data.service.filter((s) => ids.has(s.productId));
 };
 const value = (row, key) =>
-  page === "products" && key === "production" && !row.production
+  page === "shipments" && key === "date" && !row.date
     ? "미상"
-    : key === "lotId"
-      ? data.lots.find((l) => l.id === row.lotId)?.code || "미지정"
-      : page === "lots" && key === "productCount"
-        ? lotProducts(row.id).length
-        : page === "lots" && key === "shipmentCount"
-          ? lotShipments(row.id).length
-          : page === "lots" && key === "serviceCount"
-            ? lotServices(row.id).length
-            : key === "paymentStatus"
-              ? paymentStatus(row)
-              : key === "outstanding"
-                ? (
-                    Number(row.chargeAmount || 0) - Number(row.paidAmount || 0)
-                  ).toLocaleString("ko-KR")
-                : page === "service" && key === "billingType"
-                  ? row.billingType || "미정"
-                  : page === "service" &&
-                      ["chargeAmount", "paidAmount"].includes(key)
-                    ? Number(row[key] || 0).toLocaleString("ko-KR")
-                    : page === "shipments" && key === "quantity"
-                      ? row.quantity || 1
-                      : page === "orders" &&
-                          ["total", "delivered", "remaining"].includes(key)
-                        ? orderTotals(row)[key]
-                        : page === "orders" && key === "stage"
-                          ? orderStage(row)
-                          : key === "items_summary"
-                            ? (row.items || [])
-                                .map(
-                                  (i) =>
-                                    `${i.model}${i.specification?.trim() ? ` / ${i.specification}` : ""} × ${i.quantity}`,
-                                )
-                                .join("; ")
-                            : key === "orderItemId"
-                              ? linkedItem(row[key])
-                                ? `${linkedItem(row[key]).order.number} · ${linkedItem(row[key]).item.model}`
-                                : "—"
-                              : key === "category"
-                                ? productCategories[row[key]] || "미분류"
-                                : key === "productId"
-                                  ? row[key]
-                                    ? (product(row[key])?.serial ??
-                                      "삭제된 제품")
-                                    : "시리얼 없음"
-                                  : key === "customerId"
-                                    ? (customer(row[key])?.name ??
-                                      "삭제된 고객")
-                                    : page === "products" && key === "status"
-                                      ? status(row)
-                                      : row[key];
+    : page === "products" && key === "production" && !row.production
+      ? "미상"
+      : key === "lotId"
+        ? data.lots.find((l) => l.id === row.lotId)?.code || "미지정"
+        : page === "lots" && key === "productCount"
+          ? lotProducts(row.id).length
+          : page === "lots" && key === "shipmentCount"
+            ? lotShipments(row.id).length
+            : page === "lots" && key === "serviceCount"
+              ? lotServices(row.id).length
+              : key === "paymentStatus"
+                ? paymentStatus(row)
+                : key === "outstanding"
+                  ? (
+                      Number(row.chargeAmount || 0) -
+                      Number(row.paidAmount || 0)
+                    ).toLocaleString("ko-KR")
+                  : page === "service" && key === "billingType"
+                    ? row.billingType || "미정"
+                    : page === "service" &&
+                        ["chargeAmount", "paidAmount"].includes(key)
+                      ? Number(row[key] || 0).toLocaleString("ko-KR")
+                      : page === "shipments" && key === "quantity"
+                        ? row.quantity || 1
+                        : page === "orders" &&
+                            ["total", "delivered", "remaining"].includes(key)
+                          ? orderTotals(row)[key]
+                          : page === "orders" && key === "stage"
+                            ? orderStage(row)
+                            : key === "items_summary"
+                              ? (row.items || [])
+                                  .map(
+                                    (i) =>
+                                      `${i.model}${i.specification?.trim() ? ` / ${i.specification}` : ""} × ${i.quantity}`,
+                                  )
+                                  .join("; ")
+                              : key === "orderItemId"
+                                ? linkedItem(row[key])
+                                  ? `${linkedItem(row[key]).order.number} · ${linkedItem(row[key]).item.model}`
+                                  : "—"
+                                : key === "category"
+                                  ? productCategories[row[key]] || "미분류"
+                                  : key === "productId"
+                                    ? row[key]
+                                      ? (product(row[key])?.serial ??
+                                        "삭제된 제품")
+                                      : "시리얼 없음"
+                                    : key === "customerId"
+                                      ? (customer(row[key])?.name ??
+                                        "삭제된 고객")
+                                      : page === "products" && key === "status"
+                                        ? status(row)
+                                        : row[key];
 function toast(message) {
   $("#toast").textContent = message;
   $("#toast").hidden = false;
@@ -327,6 +331,7 @@ function applySnapshot(snapshot) {
   billingAvailable = snapshot.service_billing === true;
   lotsAvailable = snapshot.manufacturing_lots === true;
   unknownProductionAvailable = snapshot.production_unknown === true;
+  unknownShipmentAvailable = snapshot.shipment_date_unknown === true;
   role = snapshot.role;
 }
 async function persist(next, record, old) {
@@ -381,6 +386,8 @@ function setBusy(value) {
     syncServiceBilling();
   if (!value && page === "products" && $("#production-unknown"))
     syncUnknownProduction();
+  if (!value && page === "shipments" && $("#shipment-date-unknown"))
+    syncUnknownShipment();
 }
 function badge(v) {
   return `<span class="badge ${["재고", "합격", "완료"].includes(v) ? "green" : ["검사대기", "진행중"].includes(v) ? "amber" : ""}">${esc(v)}</span>`;
@@ -422,7 +429,7 @@ function stats() {
       ["전체 출고", data.shipments.length, "누적 출고 기록", "↗"],
       [
         "이번 달 출고",
-        data.shipments.filter((s) => s.date.startsWith(today().slice(0, 7)))
+        data.shipments.filter((s) => s.date?.startsWith(today().slice(0, 7)))
           .length,
         "이번 달 등록된 출고",
         "▤",
@@ -433,7 +440,12 @@ function stats() {
         "출고 이력이 있는 고객",
         "♧",
       ],
-      ["재고 제품", inventory, "출고 가능한 재고", "▧"],
+      [
+        "출고일 미상",
+        data.shipments.filter((s) => !s.date).length,
+        "월별 출고 집계에서 제외",
+        "◷",
+      ],
     ];
   if (page === "service")
     items = [
@@ -662,42 +674,36 @@ function openEditor(id = null) {
         required = false;
       if (page === "products" && key === "category" && id && !row.category)
         required = false;
-      if (
-        ["customer", "product", "select", "orderItem", "lot"].includes(type)
-      ) {
+      if (["product", "select", "orderItem", "lot"].includes(type)) {
         let opts =
-          type === "customer"
-            ? data.customers.map((c) => [c.id, `${c.name} · ${c.code}`])
-            : type === "lot"
-              ? data.lots
-                  .filter((l) => l.status === "진행중" || l.id === row.lotId)
-                  .map((l) => [
-                    l.id,
-                    `${l.code} · ${l.model} / ${l.specification || "사양 없음"} · ${l.status}`,
-                  ])
-              : type === "product"
-                ? data.products
-                    .filter(
-                      (p) => status(p) === "재고" || p.id === row.productId,
-                    )
-                    .map((p) => [p.id, `${p.serial} · ${p.code}`])
-                : type === "orderItem"
-                  ? data.orders.flatMap((o) =>
-                      o.items
-                        .filter(
-                          (i) =>
-                            (o.stage !== "취소" && i.delivered < i.quantity) ||
-                            i.id === row.orderItemId,
-                        )
-                        .map((i) => [
-                          i.id,
-                          `${o.number} · ${customer(o.customerId)?.name} · ${i.model} / ${i.specification || "사양 없음"} (남은 ${i.quantity - i.delivered}대)`,
-                        ]),
-                    )
-                  : choices.map((c) => [
-                      c,
-                      key === "category" ? `${c} · ${productCategories[c]}` : c,
-                    ]);
+          type === "lot"
+            ? data.lots
+                .filter((l) => l.status === "진행중" || l.id === row.lotId)
+                .map((l) => [
+                  l.id,
+                  `${l.code} · ${l.model} / ${l.specification || "사양 없음"} · ${l.status}`,
+                ])
+            : type === "product"
+              ? data.products
+                  .filter((p) => status(p) === "재고" || p.id === row.productId)
+                  .map((p) => [p.id, `${p.serial} · ${p.code}`])
+              : type === "orderItem"
+                ? data.orders.flatMap((o) =>
+                    o.items
+                      .filter(
+                        (i) =>
+                          (o.stage !== "취소" && i.delivered < i.quantity) ||
+                          i.id === row.orderItemId,
+                      )
+                      .map((i) => [
+                        i.id,
+                        `${o.number} · ${customer(o.customerId)?.name} · ${i.model} / ${i.specification || "사양 없음"} (남은 ${i.quantity - i.delivered}대)`,
+                      ]),
+                  )
+                : choices.map((c) => [
+                    c,
+                    key === "category" ? `${c} · ${productCategories[c]}` : c,
+                  ]);
         control = `<select id="field-${key}" name="${key}" ${required ? "required" : ""}><option value="">선택해 주세요</option>${opts.map(([v, l]) => `<option value="${esc(v)}" ${row[key] === v || (!id && type === "select" && v === choices[0]) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
       } else if (type === "textarea")
         control = `<textarea id="field-${key}" name="${key}" ${required ? "required" : ""} maxlength="2000">${esc(row[key] || "")}</textarea>`;
@@ -718,6 +724,8 @@ function openEditor(id = null) {
         control = `<input id="field-quantity" name="quantity" type="number" value="${row.quantity || 1}" min="1" max="1000000" step="1" required readonly>`;
       if (page === "service" && ["chargeAmount", "paidAmount"].includes(key))
         control = `<input id="field-${key}" name="${key}" type="number" value="${row[key] || 0}" min="0" max="1000000000000" step="1">`;
+      if (type === "customer")
+        control = `<input id="field-${key}" name="${key}" type="hidden" value="${esc(row[key] || "")}"><div class="customer-picker"><input id="customer-search" type="search" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="customer-results" placeholder="고객명·코드·연락처 검색" value="${esc(customer(row[key])?.name || "")}" required><div id="customer-results" role="listbox" hidden></div><small id="selected-customer" role="status"></small></div>`;
       if (type === "serviceProduct")
         control = `<input id="field-productId" name="productId" type="hidden" value="${esc(row.productId || "")}"><div class="serial-picker"><input id="service-product-search" type="search" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="service-product-results" placeholder="시리얼·모델명·고객명·LOT 검색" value="${esc(product(row.productId)?.serial || "")}" required><div id="service-product-results" role="listbox" hidden></div><small id="selected-service-product" role="status"></small></div>`;
       let help =
@@ -752,7 +760,7 @@ function openEditor(id = null) {
         help = id
           ? "등록된 고객코드는 유지됩니다."
           : "저장 시 C0001부터 누적 번호를 생성합니다.";
-      return `<label class="field ${type === "textarea" ? "wide" : ""}" for="${type === "serviceProduct" ? "service-product-search" : "field-" + key}">${label}${required ? "<b>*</b>" : ""}${control}${help ? `<small>${help}</small>` : ""}</label>`;
+      return `<label class="field ${type === "textarea" ? "wide" : ""}" for="${type === "serviceProduct" ? "service-product-search" : type === "customer" ? "customer-search" : "field-" + key}">${label}${required ? "<b>*</b>" : ""}${control}${help ? `<small>${help}</small>` : ""}</label>`;
     })
     .join("");
   if (page === "products" && shipped(id)) {
@@ -819,6 +827,7 @@ function openEditor(id = null) {
       addOrderLine({ id: crypto.randomUUID(), quantity: 1, delivered: 0 }),
     );
   }
+  if (s.fields.some((f) => f[2] === "customer")) setupCustomerSearch(row);
   if (page === "shipments" && $("#field-orderItemId")) {
     $("#field-orderItemId").addEventListener("change", () =>
       configureShipmentItem(false),
@@ -855,6 +864,16 @@ function openEditor(id = null) {
     $("#production-unknown").addEventListener("change", syncUnknownProduction);
     syncUnknownProduction();
   }
+  if (page === "shipments" && unknownShipmentAvailable) {
+    $("#field-date")
+      .closest("label")
+      .insertAdjacentHTML(
+        "afterend",
+        `<label class="field wide production-unknown-toggle"><input id="shipment-date-unknown" type="checkbox" ${id && !row.date ? "checked" : ""}> 출고일 미상 (과거 이력)</label>`,
+      );
+    $("#shipment-date-unknown").addEventListener("change", syncUnknownShipment);
+    syncUnknownShipment();
+  }
   $("#editor").showModal();
 }
 $("#record-form").addEventListener("submit", async (e) => {
@@ -864,6 +883,11 @@ $("#record-form").addEventListener("submit", async (e) => {
     const old = data[page].find((r) => r.id === editing);
     const record = { id: editing || crypto.randomUUID() };
     const form = new FormData(e.target);
+    if (
+      schemas[page].fields.some((f) => f[2] === "customer") &&
+      !form.get("customerId")
+    )
+      throw Error("검색 결과에서 고객을 선택해 주세요.");
     if (page === "service" && !form.get("productId"))
       throw Error("검색 결과에서 시리얼번호를 선택해 주세요.");
     for (const [key, , type, required] of schemas[page].fields.filter(
@@ -882,6 +906,11 @@ $("#record-form").addEventListener("submit", async (e) => {
       ).trim();
       if (
         required &&
+        !(
+          page === "shipments" &&
+          key === "date" &&
+          $("#shipment-date-unknown")?.checked
+        ) &&
         !(
           page === "products" &&
           key === "production" &&
@@ -994,6 +1023,7 @@ $("#record-form").addEventListener("submit", async (e) => {
       )
         throw Error("이미 출고된 제품입니다.");
       if (
+        record.date &&
         !quantityMode &&
         product(record.productId).production &&
         record.date < product(record.productId).production
@@ -1328,6 +1358,14 @@ function configureShipmentItem(initial) {
   if (link) {
     $("#field-customerId").value = link.order.customerId;
     $("#field-name").value = link.item.model;
+    updateCustomerDisplay(link.order.customerId);
+  }
+  if ($("#customer-search")) {
+    $("#customer-search").readOnly = !!link;
+    if (link) {
+      $("#customer-results").hidden = true;
+      $("#customer-search").setAttribute("aria-expanded", "false");
+    }
   }
   const old = data.shipments.find((s) => s.id === editing);
   const options = data.products.filter(
@@ -1377,7 +1415,7 @@ function renderLotHistory(lot) {
     )}<h3>출고 ${shipments.length}건</h3>${list(
       shipments.map(
         (s) =>
-          `${esc(s.date)} · ${esc(customer(s.customerId)?.name)} · ${esc(product(s.productId)?.serial)}`,
+          `${esc(s.date || "미상")} · ${esc(customer(s.customerId)?.name)} · ${esc(product(s.productId)?.serial)}`,
       ),
       "출고 내역이 없습니다.",
     )}<h3>A/S ${services.length}건</h3>${list(
@@ -1532,4 +1570,143 @@ function syncUnknownProduction() {
   date.required = !checkbox.checked;
   date.disabled = checkbox.checked;
   if (checkbox.checked) date.value = "";
+}
+
+function syncUnknownShipment() {
+  const checkbox = $("#shipment-date-unknown"),
+    date = $("#field-date");
+  if (!checkbox || !date) return;
+  date.required = !checkbox.checked;
+  date.disabled = checkbox.checked;
+  if (checkbox.checked) date.value = "";
+}
+function updateCustomerDisplay(id) {
+  const c = customer(id);
+  if (!$("#customer-search")) return;
+  $("#customer-search").value = c?.name || "";
+  $("#selected-customer").textContent = c
+    ? [c.code, c.phone, c.address].filter(Boolean).join(" · ")
+    : "";
+}
+function setupCustomerSearch(row) {
+  const input = $("#customer-search"),
+    hidden = $("#field-customerId"),
+    list = $("#customer-results"),
+    summary = $("#selected-customer");
+  let matches = [],
+    active = -1;
+  const entries = data.customers.map((c) => ({
+    c,
+    text: [c.name, c.code, c.phone, c.address]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase(),
+    phone: (c.phone || "").replace(/\D/g, ""),
+  }));
+  function close() {
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+    active = -1;
+  }
+  function choose(c) {
+    hidden.value = c.id;
+    updateCustomerDisplay(c.id);
+    input.focus();
+    close();
+  }
+  function search() {
+    if (input.readOnly) return;
+    const q = input.value.trim().toLowerCase(),
+      digits = /^[0-9+()\-\s]+$/.test(q) ? q.replace(/\D/g, "") : "";
+    matches = entries
+      .filter(
+        (e) => !q || e.text.includes(q) || (digits && e.phone.includes(digits)),
+      )
+      .sort(
+        (a, b) =>
+          Number(b.c.code.toLowerCase() === q) -
+          Number(a.c.code.toLowerCase() === q),
+      )
+      .map((e) => e.c);
+    const total = matches.length;
+    matches = matches.slice(0, 20);
+    active = -1;
+    list.innerHTML = matches.length
+      ? matches
+          .map(
+            (c, i) =>
+              `<button type="button" role="option" aria-selected="false" id="customer-result-${i}" data-customer="${i}"><strong>${esc(c.name)}</strong><span>${esc([c.code, c.phone, c.address].filter(Boolean).join(" · "))}</span></button>`,
+          )
+          .join("")
+      : "<p>검색 결과가 없습니다.</p>";
+    if (total > 20)
+      list.insertAdjacentHTML(
+        "beforeend",
+        `<p>검색 결과 ${total}개 중 20개 표시 · 검색어를 더 입력해 주세요.</p>`,
+      );
+    input.removeAttribute("aria-activedescendant");
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  }
+  input.addEventListener("focus", search);
+  input.addEventListener("input", () => {
+    hidden.value = "";
+    summary.textContent = "검색 결과에서 고객을 선택해 주세요.";
+    search();
+  });
+  list.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-customer]");
+    if (b) choose(matches[Number(b.dataset.customer)]);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (input.readOnly) return;
+    if (e.key === "Escape" && !list.hidden) {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
+    if (["ArrowDown", "ArrowUp"].includes(e.key)) {
+      e.preventDefault();
+      if (list.hidden) search();
+      if (!matches.length) return;
+      active = Math.max(
+        0,
+        Math.min(matches.length - 1, active + (e.key === "ArrowDown" ? 1 : -1)),
+      );
+      list
+        .querySelectorAll("[role=option]")
+        .forEach((b, i) =>
+          b.setAttribute("aria-selected", String(i === active)),
+        );
+      input.setAttribute("aria-activedescendant", `customer-result-${active}`);
+      list
+        .querySelector(`#customer-result-${active}`)
+        .scrollIntoView({ block: "nearest" });
+    }
+    if (e.key === "Enter" && !list.hidden) {
+      e.preventDefault();
+      const exact = matches.find(
+        (c) => c.code.toLowerCase() === input.value.trim().toLowerCase(),
+      );
+      if (matches[active] || exact || matches.length === 1)
+        choose(matches[active] || exact || matches[0]);
+    }
+  });
+  input.addEventListener("blur", () =>
+    setTimeout(() => {
+      if (!list.contains(document.activeElement)) close();
+    }, 150),
+  );
+  list.addEventListener("focusout", () =>
+    setTimeout(() => {
+      if (
+        document.activeElement !== input &&
+        !list.contains(document.activeElement)
+      )
+        close();
+    }, 0),
+  );
+  updateCustomerDisplay(row.customerId);
 }

@@ -126,6 +126,10 @@ const { chromium } = require("playwright");
       .getByRole("button", { name, exact: false })
       .click();
   }
+  async function pickCustomer(p) {
+    await p.locator("#customer-search").click();
+    await p.locator("#customer-results [role=option]").first().click();
+  }
   async function add(p, fields) {
     await p.locator("#add-button").click();
     if (fields.code && (await p.locator("#customer-code-mode").count()))
@@ -188,7 +192,7 @@ const { chromium } = require("playwright");
   await ep.locator("tbody").filter({ hasText: "부산" }).waitFor();
   await nav(ep, "출고관리");
   await ep.locator("#add-button").click();
-  await ep.locator("[name=customerId]").selectOption({ index: 1 });
+  await pickCustomer(ep);
   await ep.locator("[name=productId]").selectOption({ index: 1 });
   await ep.locator("[name=name]").fill("레일");
   await ep.getByRole("button", { name: "저장하기" }).click();
@@ -392,7 +396,7 @@ const { chromium } = require("playwright");
   await mp.locator("#add-button").click();
   await mp.locator("[name=received]").fill("2026-10-13");
   await mp.locator("[name=due]").fill("2026-11-01");
-  await mp.locator("[name=customerId]").selectOption({ index: 1 });
+  await pickCustomer(mp);
   await mp
     .locator(".order-line")
     .first()
@@ -470,7 +474,7 @@ const { chromium } = require("playwright");
   await mp.locator("#add-button").click();
   await mp.locator("[name=received]").fill("2026-10-14");
   await mp.locator("[name=due]").fill("2026-11-01");
-  await mp.locator("[name=customerId]").selectOption({ index: 1 });
+  await pickCustomer(mp);
   await mp
     .locator(".order-line [data-item=tracking_mode]")
     .selectOption("quantity");
@@ -568,7 +572,7 @@ const { chromium } = require("playwright");
   const lotSerial = await lotProduct.locator("td").first().innerText();
   await nav(mp, "출고관리");
   await mp.locator("#add-button").click();
-  await mp.locator("[name=customerId]").selectOption({ index: 1 });
+  await pickCustomer(mp);
   await mp.locator("[name=date]").fill("2026-10-20");
   await mp.locator("[name=name]").fill("LOT-MODEL");
   await mp
@@ -703,6 +707,89 @@ const { chromium } = require("playwright");
     true,
   );
   assert.equal(await mp.locator("[name=production]").isDisabled(), false);
+  await mp.locator("#cancel-dialog").click();
+
+  await nav(mp, "출고관리");
+  await mp.locator("#add-button").click();
+  await mp.locator("#customer-search").fill("01011112222");
+  assert.equal(await mp.locator("#customer-results [role=option]").count(), 1);
+  await mp.locator("#customer-search").press("ArrowDown");
+  await mp.locator("#customer-search").press("Enter");
+  assert.match(
+    await mp.locator("#selected-customer").innerText(),
+    /010-1111-2222/,
+  );
+  await mp.locator("[name=name]").fill("LEGACY-MODEL");
+  await mp
+    .locator("[name=productId]")
+    .selectOption({ label: "BEFORE-SYSTEM-001 · LEGACY-MODEL" });
+  await mp.locator("#shipment-date-unknown").check();
+  assert.equal(await mp.locator("[name=date]").isDisabled(), true);
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  const historical = mp
+    .locator("tbody tr")
+    .filter({ hasText: "BEFORE-SYSTEM-001" });
+  assert.match(await historical.innerText(), /미상/);
+  assert.match(await mp.locator("#stats").innerText(), /출고일 미상/);
+  await historical.locator("[data-edit]").click();
+  assert.equal(await mp.locator("#shipment-date-unknown").isChecked(), true);
+  assert.equal(await mp.locator("#customer-search").inputValue(), "공유 고객");
+  await mp.locator("#shipment-date-unknown").uncheck();
+  await mp.locator("[name=date]").fill("2018-12-31");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#form-error").filter({ hasText: "생산일" }).waitFor();
+  await mp.locator("[name=date]").fill("2020-01-01");
+  await mp.getByRole("button", { name: "저장하기" }).click();
+  await mp.locator("#editor").waitFor({ state: "hidden" });
+  assert.match(await historical.innerText(), /2020-01-01/);
+  for (let n = 1; n <= 25; n++)
+    await db.query(
+      "insert into customers(id,code,name,address,phone,notes) values($1,$2,'동명 고객',$3,$4,'')",
+      [
+        require("node:crypto").randomUUID(),
+        `SEARCH-${String(n).padStart(4, "0")}`,
+        `주소 ${n}`,
+        `02-9999-${String(n).padStart(4, "0")}`,
+      ],
+    );
+  await mp.locator("#refresh-button").click();
+  await mp.waitForFunction(
+    () => !document.querySelector("#refresh-button").disabled,
+  );
+  await nav(mp, "수주관리");
+  await mp.locator("#add-button").click();
+  await mp.locator("#customer-search").fill("동명 고객");
+  assert.equal(await mp.locator("#customer-results [role=option]").count(), 20);
+  assert.match(
+    await mp.locator("#customer-results").innerText(),
+    /25개 중 20개/,
+  );
+  await mp.locator("#customer-search").fill("SEARCH-0025");
+  await mp.locator("#customer-search").press("Enter");
+  assert.match(
+    await mp.locator("#selected-customer").innerText(),
+    /SEARCH-0025/,
+  );
+  await mp.locator("#customer-search").fill("없는 고객");
+  assert.equal(await mp.locator("[name=customerId]").inputValue(), "");
+  assert.match(
+    await mp.locator("#customer-results").innerText(),
+    /검색 결과가 없습니다/,
+  );
+  await mp.locator("#cancel-dialog").click();
+  await nav(mp, "출고관리");
+  await mp
+    .locator("tbody tr")
+    .filter({ hasText: "ORDER-500" })
+    .first()
+    .locator("[data-edit]")
+    .click();
+  assert.equal(
+    await mp.locator("#customer-search").evaluate((e) => e.readOnly),
+    true,
+  );
+  assert.ok(await mp.locator("#customer-search").inputValue());
   await mp.locator("#cancel-dialog").click();
   assert.deepEqual(errors, []);
   await b.close();
