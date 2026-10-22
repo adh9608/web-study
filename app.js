@@ -121,6 +121,7 @@ let data = {
     service: [],
   },
   page = "products",
+  listPage = 1,
   filter = "전체",
   editing = null,
   toastTimer;
@@ -608,7 +609,12 @@ function renderTable() {
     s.fields.map(([, label]) => `<th scope="col">${label}</th>`).join("") +
     (page === "service" ? '<th scope="col">상태</th>' : "") +
     '<th scope="col">관리</th></tr>';
-  const visible = rows();
+  const matched = rows();
+  const pageSize = 50;
+  const pageCount = Math.max(1, Math.ceil(matched.length / pageSize));
+  listPage = Math.max(1, Math.min(listPage, pageCount));
+  const start = (listPage - 1) * pageSize;
+  const visible = matched.slice(start, start + pageSize);
   $("#table-body").innerHTML = visible
     .map(
       (r) =>
@@ -630,7 +636,10 @@ function renderTable() {
     ? "<strong>검색 결과가 없습니다</strong>검색어나 필터를 변경해 주세요."
     : `<strong>아직 등록된 ${s.singular} 정보가 없습니다</strong>첫 번째 ${s.singular} 정보를 등록해 관리를 시작하세요.<br><button class="primary" data-add>+ ${s.singular} 등록</button>`;
   $("#result-count").textContent =
-    `전체 ${data[page].length}건 중 ${visible.length}건 표시`;
+    `전체 ${data[page].length}건 · 검색 결과 ${matched.length}건 · ${matched.length ? start + 1 : 0}–${start + visible.length}건 표시`;
+  $("#page-status").textContent = `${listPage} / ${pageCount} 페이지`;
+  $("#previous-page").disabled = listPage === 1;
+  $("#next-page").disabled = listPage === pageCount;
 }
 function openEditor(id = null) {
   if (page === "lots" && (!cloudMode || !lotsAvailable)) {
@@ -1128,6 +1137,7 @@ $("#navigation").addEventListener("click", (e) => {
   const b = e.target.closest("[data-page]");
   if (!b) return;
   page = b.dataset.page;
+  listPage = 1;
   filter = "전체";
   $("#search").value = "";
   render();
@@ -1136,6 +1146,7 @@ $("#filter-tabs").addEventListener("click", (e) => {
   const b = e.target.closest("[data-filter]");
   if (b) {
     filter = b.dataset.filter;
+    listPage = 1;
     render();
   }
 });
@@ -1147,7 +1158,16 @@ $("#empty-state").addEventListener("click", (e) => {
   if (e.target.closest("[data-add]")) openEditor();
 });
 $("#add-button").addEventListener("click", () => openEditor());
-$("#search").addEventListener("input", renderTable);
+$("#search").addEventListener("input", () => {
+  listPage = 1;
+  renderTable();
+});
+for (const [id, step] of [["previous-page", -1], ["next-page", 1]]) {
+  $("#" + id).addEventListener("click", () => {
+    listPage += step;
+    renderTable();
+  });
+}
 for (const id of ["close-dialog", "cancel-dialog"])
   $("#" + id).addEventListener("click", () => $("#editor").close());
 $("#editor").addEventListener("click", (e) => {

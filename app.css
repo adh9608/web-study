@@ -724,9 +724,7 @@ dialog::backdrop {
   .table-footer {
     padding: 16px;
   }
-  .table-footer span:last-child {
-    display: none;
-  }
+
   footer {
     padding: 10px 18px 24px;
   }
@@ -1041,4 +1039,25 @@ dialog::backdrop {
   display: block;
   color: #16886a;
   line-height: 1.6;
+}
+
+.table-footer {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pagination button {
+  padding: 8px 12px;
+}
+#page-status {
+  white-space: nowrap;
+}
+
+.pagination button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }

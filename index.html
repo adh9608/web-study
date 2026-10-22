@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>해광삼우FA · 운영 관리</title>
-    <link rel="stylesheet" href="app.css?v=20261023-customer-shipment" />
+    <link rel="stylesheet" href="app.css?v=20261022-pagination" />
   </head>
   <body>
     <div id="app-content" hidden>
@@ -80,8 +80,12 @@
             </div>
             <div id="empty-state" class="empty" hidden></div>
             <div class="table-footer">
-              <span id="result-count"></span
-              ><span>등록 정보를 선택해 수정할 수 있습니다.</span>
+              <span id="result-count"></span>
+              <nav class="pagination" aria-label="목록 페이지 이동">
+                <button type="button" id="previous-page" class="secondary">이전</button>
+                <span id="page-status" role="status" aria-live="polite"></span>
+                <button type="button" id="next-page" class="secondary">다음</button>
+              </nav>
             </div>
           </section>
           <p class="storage-note" id="storage-note"></p>
@@ -165,6 +169,6 @@
     <div id="toast" role="status" hidden></div>
     <script src="config.js?v=20261013-login-fix"></script>
     <script src="cloud.js?v=20261023-customer-shipment"></script>
-    <script src="app.js?v=20261023-shipment-name"></script>
+    <script src="app.js?v=20261022-pagination"></script>
   </body>
 </html>
