@@ -113,7 +113,7 @@ const { randomUUID } = require("node:crypto");
     id: sid,
     date: "2026-10-13",
     customerId: cid,
-    name: "ignored",
+    name: "레일방제기",
     productId: p1,
     orderItemId: iid,
     notes: "",
@@ -121,7 +121,7 @@ const { randomUUID } = require("node:crypto");
   snapshot = await save("shipments", ship, null, employee);
   assert.equal(snapshot.data.orders[0].items[0].delivered, 1);
   assert.equal(snapshot.data.orders[0].version, 2);
-  assert.equal(snapshot.data.shipments[0].name, "HS-100");
+  assert.equal(snapshot.data.shipments[0].name, "레일방제기");
   await assert.rejects(save("orders", order, 1), /STALE_RECORD/);
   await assert.rejects(
     save("orders", { ...order, customerId: other }, 2),
@@ -236,6 +236,21 @@ const { randomUUID } = require("node:crypto");
     items: [{ id: randomUUID(), model: "NEW", specification: "", quantity: 1 }],
   });
   assert.ok(snapshot.data.orders.some((o) => o.number === "SO0003"));
+  const nameMigration = fs.readFileSync(
+    path.join(__dirname, "../supabase/migrations/20261023_shipment_product_name.sql"), "utf8");
+  await db.exec(nameMigration);
+  await db.exec(nameMigration);
+  const before = snapshot.data.shipments.find(s => s.id === sid);
+  snapshot = await save("shipments", {...ship, name: "레일리프트", orderItemId: iid}, before.version);
+  const renamed = snapshot.data.shipments.find(s => s.id === sid);
+  assert.equal(renamed.name, "레일리프트");
+  assert.equal(renamed.productId, before.productId);
+  assert.equal(renamed.customerId, before.customerId);
+  assert.equal(renamed.orderItemId, before.orderItemId);
+  assert.equal(snapshot.data.orders.find(o => o.id === oid).items[0].delivered, 1);
+  await db.exec(nameMigration);
+  const persisted = await as(admin, async () => (await db.query("select flow_snapshot() as result")).rows[0].result);
+  assert.equal(persisted.data.shipments.find(s => s.id === sid).name, "레일리프트");
   console.log(
     "PASS: multi-item orders, numbering, staff permissions, partial shipments, quantity/customer/model/spec/date validation, version conflicts, cancellation, guarded deletion, shipment deletion counts and repeatable cumulative migration",
   );

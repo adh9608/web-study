@@ -432,10 +432,8 @@ const { chromium } = require("playwright");
     await mp.locator("[name=orderItemId]").selectOption({ index: 1 });
     await mp.locator("[name=date]").fill("2026-10-13");
     await mp.locator("[name=productId]").selectOption({ index: 1 });
-    assert.equal(
-      await mp.locator("[name=name]").evaluate((e) => e.readOnly),
-      true,
-    );
+    assert.equal(await mp.locator("[name=name]").evaluate((e)=>e.readOnly),false);
+    await mp.locator("[name=name]").fill("레일리프트");
     await mp.getByRole("button", { name: "저장하기" }).click();
     await mp.locator("#editor").waitFor({ state: "hidden" });
     await nav(mp, "수주관리");
@@ -493,6 +491,7 @@ const { chromium } = require("playwright");
     );
     await mp.locator("[name=date]").fill("2026-10-14");
     await mp.locator("[name=quantity]").fill(String(amount));
+    await mp.locator("[name=name]").fill("용접품 납품명");
     await mp.getByRole("button", { name: "저장하기" }).click();
     if (amount === 16) {
       await mp.locator("#form-error").filter({ hasText: "초과" }).waitFor();
@@ -781,7 +780,7 @@ const { chromium } = require("playwright");
   await nav(mp, "출고관리");
   await mp
     .locator("tbody tr")
-    .filter({ hasText: "ORDER-500" })
+    .filter({ hasText: "레일리프트" })
     .first()
     .locator("[data-edit]")
     .click();
@@ -791,6 +790,10 @@ const { chromium } = require("playwright");
   );
   assert.ok(await mp.locator("#customer-search").inputValue());
   await mp.locator("#cancel-dialog").click();
+  await nav(mp,"출고관리");await mp.locator("tbody tr").filter({hasText:"레일리프트"}).first().locator("[data-edit]").click();
+  const originalLink=await mp.locator("[name=orderItemId]").inputValue(),originalProduct=await mp.locator("[name=productId]").inputValue(),originalCustomer=await mp.locator("[name=customerId]").inputValue();
+  assert.ok(originalLink);assert.equal(await mp.locator("[name=name]").evaluate(e=>e.readOnly),false);await mp.locator("[name=name]").fill("레일방제기 납품명");await mp.getByRole("button",{name:"저장하기"}).click();await mp.locator("#editor").waitFor({state:"hidden"});
+  await mp.locator("tbody tr").filter({hasText:"레일방제기 납품명"}).locator("[data-edit]").click();assert.equal(await mp.locator("[name=orderItemId]").inputValue(),originalLink);assert.equal(await mp.locator("[name=productId]").inputValue(),originalProduct);assert.equal(await mp.locator("[name=customerId]").inputValue(),originalCustomer);await mp.locator("#cancel-dialog").click();
   assert.deepEqual(errors, []);
   await b.close();
   await db.close();

@@ -738,6 +738,8 @@ function openEditor(id = null) {
               : page === "products" && key === "status" && shipped(id)
                 ? "출고 이력이 있는 제품은 출고 상태가 유지됩니다."
                 : "";
+      if (page === "shipments" && key === "name")
+        help = "레일리프트·레일방제기 등 출고 제품명을 직접 입력하세요. 수주 모델명과 별도로 저장됩니다.";
       if (type === "lot")
         help =
           "모델명만 LOT와 일치해야 합니다. 사양과 생산일은 연결 조건으로 검사하지 않습니다. 마감 LOT에는 새 제품을 연결할 수 없습니다.";
@@ -1354,10 +1356,9 @@ function configureShipmentItem(initial) {
     $("#field-productId").value = "";
     if (!initial) $("#field-quantity").value = "1";
   }
-  $("#field-name").readOnly = !!link;
+  $("#field-name").readOnly = false;
   if (link) {
     $("#field-customerId").value = link.order.customerId;
-    $("#field-name").value = link.item.model;
     updateCustomerDisplay(link.order.customerId);
   }
   if ($("#customer-search")) {

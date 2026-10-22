@@ -195,7 +195,6 @@ begin
  if item.tracking_mode='serial' and (lower(btrim(prod.code))<>lower(btrim(item.model)) or lower(btrim(prod.rail))<>lower(btrim(item.specification))) then raise exception 'ORDER_PRODUCT_MISMATCH'; end if;
  select coalesce(sum(quantity),0) into shipped_count from public.shipments where "orderItemId"=item.id and id<>new.id;
  if shipped_count+new.quantity>item.quantity then raise exception 'ORDER_OVERSHIP'; end if;
- new.name:=item.model;
  return new;
 end $$;
 revoke all on function public.flow_order_shipment_check() from public,anon,authenticated;
