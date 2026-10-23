@@ -11,6 +11,9 @@ const { randomUUID } = require("node:crypto");
   await db.exec(
     fs.readFileSync(path.join(__dirname, "../supabase/schema.sql"), "utf8"),
   );
+  await db.exec(
+    "drop view flow_products_read,flow_lots_read,flow_orders_read,flow_shipments_read,flow_service_read;",
+  );
   // Upgrade a DB without LOT tables, preserving an existing product.
   await db.exec(
     'drop trigger flow_lot_product_guard on products;alter table products drop column "lotId";drop table manufacturing_lots;',

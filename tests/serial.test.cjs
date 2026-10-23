@@ -11,6 +11,9 @@ const { randomUUID } = require("node:crypto");
   await db.exec(
     fs.readFileSync(path.join(__dirname, "../supabase/schema.sql"), "utf8"),
   );
+  await db.exec(
+    "drop view flow_products_read,flow_lots_read,flow_orders_read,flow_shipments_read,flow_service_read;",
+  );
   // Reproduce a pre-migration installation with legacy identifiers.
   await db.exec(
     "drop trigger flow_product_serial_trigger on products;alter table products drop column category;alter table products drop column serial_generated;drop table flow_serial_counters;",

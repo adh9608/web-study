@@ -140,6 +140,16 @@ if (loginInput) {
     label.firstChild.textContent = "아이디";
 }
 
+let serverPaging = false,
+  serverMeta = null,
+  serverRows = [],
+  serverTotal = 0;
+let listRequest = 0,
+  searchTimer,
+  editorRequest = 0,
+  savedSerial = "";
+let pendingList = Promise.resolve(),
+  reloadShipmentProducts = null;
 let cloudMode = false,
   role = "employee",
   busy = false,
@@ -204,13 +214,21 @@ const today = () =>
   }).format(new Date());
 const product = (id) => data.products.find((p) => p.id === id);
 const customer = (id) => data.customers.find((c) => c.id === id);
-const shipped = (id) => !!id && data.shipments.some((s) => s.productId === id);
+const shipped = (id) =>
+  !!id &&
+  (product(id)?._shipped || data.shipments.some((s) => s.productId === id));
 const status = (p) => (shipped(p.id) ? "출고" : p.status);
-const orderTotals = (o) => ({
-  total: (o.items || []).reduce((n, i) => n + i.quantity, 0),
-  delivered: (o.items || []).reduce((n, i) => n + i.delivered, 0),
-  remaining: (o.items || []).reduce((n, i) => n + i.quantity - i.delivered, 0),
-});
+const orderTotals = (o) =>
+  serverPaging && o.total !== undefined
+    ? { total: o.total, delivered: o.delivered, remaining: o.remaining }
+    : {
+        total: (o.items || []).reduce((n, i) => n + i.quantity, 0),
+        delivered: (o.items || []).reduce((n, i) => n + i.delivered, 0),
+        remaining: (o.items || []).reduce(
+          (n, i) => n + i.quantity - i.delivered,
+          0,
+        ),
+      };
 const orderStage = (o) =>
   o.stage === "취소"
     ? "취소"
@@ -219,7 +237,7 @@ const orderStage = (o) =>
       : o.stage;
 function linkedItem(id) {
   for (const order of data.orders) {
-    const item = order.items.find((i) => i.id === id);
+    const item = (order.items || []).find((i) => i.id === id);
     if (item) return { order, item };
   }
   return null;
@@ -250,61 +268,64 @@ const lotServices = (id) => {
   return data.service.filter((s) => ids.has(s.productId));
 };
 const value = (row, key) =>
-  page === "shipments" && key === "date" && !row.date
-    ? "미상"
-    : page === "products" && key === "production" && !row.production
+  serverPaging && row._display && Object.hasOwn(row._display, key)
+    ? row._display[key]
+    : page === "shipments" && key === "date" && !row.date
       ? "미상"
-      : key === "lotId"
-        ? data.lots.find((l) => l.id === row.lotId)?.code || "미지정"
-        : page === "lots" && key === "productCount"
-          ? lotProducts(row.id).length
-          : page === "lots" && key === "shipmentCount"
-            ? lotShipments(row.id).length
-            : page === "lots" && key === "serviceCount"
-              ? lotServices(row.id).length
-              : key === "paymentStatus"
-                ? paymentStatus(row)
-                : key === "outstanding"
-                  ? (
-                      Number(row.chargeAmount || 0) -
-                      Number(row.paidAmount || 0)
-                    ).toLocaleString("ko-KR")
-                  : page === "service" && key === "billingType"
-                    ? row.billingType || "미정"
-                    : page === "service" &&
-                        ["chargeAmount", "paidAmount"].includes(key)
-                      ? Number(row[key] || 0).toLocaleString("ko-KR")
-                      : page === "shipments" && key === "quantity"
-                        ? row.quantity || 1
-                        : page === "orders" &&
-                            ["total", "delivered", "remaining"].includes(key)
-                          ? orderTotals(row)[key]
-                          : page === "orders" && key === "stage"
-                            ? orderStage(row)
-                            : key === "items_summary"
-                              ? (row.items || [])
-                                  .map(
-                                    (i) =>
-                                      `${i.model}${i.specification?.trim() ? ` / ${i.specification}` : ""} × ${i.quantity}`,
-                                  )
-                                  .join("; ")
-                              : key === "orderItemId"
-                                ? linkedItem(row[key])
-                                  ? `${linkedItem(row[key]).order.number} · ${linkedItem(row[key]).item.model}`
-                                  : "—"
-                                : key === "category"
-                                  ? productCategories[row[key]] || "미분류"
-                                  : key === "productId"
-                                    ? row[key]
-                                      ? (product(row[key])?.serial ??
-                                        "삭제된 제품")
-                                      : "시리얼 없음"
-                                    : key === "customerId"
-                                      ? (customer(row[key])?.name ??
-                                        "삭제된 고객")
-                                      : page === "products" && key === "status"
-                                        ? status(row)
-                                        : row[key];
+      : page === "products" && key === "production" && !row.production
+        ? "미상"
+        : key === "lotId"
+          ? data.lots.find((l) => l.id === row.lotId)?.code || "미지정"
+          : page === "lots" && key === "productCount"
+            ? (row.productCount ?? lotProducts(row.id).length)
+            : page === "lots" && key === "shipmentCount"
+              ? (row.shipmentCount ?? lotShipments(row.id).length)
+              : page === "lots" && key === "serviceCount"
+                ? (row.serviceCount ?? lotServices(row.id).length)
+                : key === "paymentStatus"
+                  ? paymentStatus(row)
+                  : key === "outstanding"
+                    ? (
+                        Number(row.chargeAmount || 0) -
+                        Number(row.paidAmount || 0)
+                      ).toLocaleString("ko-KR")
+                    : page === "service" && key === "billingType"
+                      ? row.billingType || "미정"
+                      : page === "service" &&
+                          ["chargeAmount", "paidAmount"].includes(key)
+                        ? Number(row[key] || 0).toLocaleString("ko-KR")
+                        : page === "shipments" && key === "quantity"
+                          ? row.quantity || 1
+                          : page === "orders" &&
+                              ["total", "delivered", "remaining"].includes(key)
+                            ? orderTotals(row)[key]
+                            : page === "orders" && key === "stage"
+                              ? orderStage(row)
+                              : key === "items_summary"
+                                ? (row.items || [])
+                                    .map(
+                                      (i) =>
+                                        `${i.model}${i.specification?.trim() ? ` / ${i.specification}` : ""} × ${i.quantity}`,
+                                    )
+                                    .join("; ")
+                                : key === "orderItemId"
+                                  ? linkedItem(row[key])
+                                    ? `${linkedItem(row[key]).order.number} · ${linkedItem(row[key]).item.model}`
+                                    : "—"
+                                  : key === "category"
+                                    ? productCategories[row[key]] || "미분류"
+                                    : key === "productId"
+                                      ? row[key]
+                                        ? (product(row[key])?.serial ??
+                                          "삭제된 제품")
+                                        : "시리얼 없음"
+                                      : key === "customerId"
+                                        ? (customer(row[key])?.name ??
+                                          "삭제된 고객")
+                                        : page === "products" &&
+                                            key === "status"
+                                          ? status(row)
+                                          : row[key];
 function toast(message) {
   $("#toast").textContent = message;
   $("#toast").hidden = false;
@@ -334,10 +355,14 @@ function applySnapshot(snapshot) {
   unknownProductionAvailable = snapshot.production_unknown === true;
   unknownShipmentAvailable = snapshot.shipment_date_unknown === true;
   role = snapshot.role;
+  serverPaging = snapshot.server_paging === true;
+  serverMeta = serverPaging ? snapshot : null;
 }
 async function persist(next, record, old) {
   if (cloudMode) {
-    applySnapshot(await cloud.save(page, record, old?.version));
+    const result = await cloud.save(page, record, old?.version);
+    savedSerial = result.rows?.[0]?.serial || "";
+    await refreshServer();
   } else {
     if (storageFailed)
       throw Error(
@@ -518,6 +543,13 @@ function stats() {
         "▧",
       ],
     ];
+  if (serverPaging)
+    items = items.map((item, i) => [
+      item[0],
+      Number(serverMeta.metrics[page][i]),
+      item[2],
+      item[3],
+    ]);
   $("#stats").innerHTML = items
     .map(
       ([label, n, note, icon]) =>
@@ -564,7 +596,7 @@ function render() {
   $("#navigation").innerHTML = Object.entries(schemas)
     .map(
       ([key, v]) =>
-        `<button data-page="${key}" class="${key === page ? "active" : ""}" ${key === page ? 'aria-current="page"' : ""}><span class="nav-icon">${v.icon}</span>${v.title}<span class="nav-count">${data[key].length}</span></button>`,
+        `<button data-page="${key}" class="${key === page ? "active" : ""}" ${key === page ? 'aria-current="page"' : ""}><span class="nav-icon">${v.icon}</span>${v.title}<span class="nav-count">${serverPaging ? serverMeta.counts[key] : data[key].length}</span></button>`,
     )
     .join("");
   $("#breadcrumb").textContent = s.title;
@@ -572,7 +604,9 @@ function render() {
   $("#page-description").textContent = s.description;
   $("#add-button").textContent = "+ " + s.singular + " 등록";
   $("#list-title").textContent = s.singular + " 목록";
-  $("#record-count").textContent = data[page].length;
+  $("#record-count").textContent = serverPaging
+    ? serverMeta.counts[page]
+    : data[page].length;
   $("#search").placeholder = s.title + " 정보 검색";
   const filters =
     page === "products"
@@ -603,18 +637,26 @@ function render() {
   renderTable();
 }
 function renderTable() {
+  clearTimeout(searchTimer);
+  if (serverPaging) return fetchServerList();
+  drawTable();
+}
+function drawTable() {
   const s = schemas[page];
   $("#table-head").innerHTML =
     "<tr>" +
     s.fields.map(([, label]) => `<th scope="col">${label}</th>`).join("") +
     (page === "service" ? '<th scope="col">상태</th>' : "") +
     '<th scope="col">관리</th></tr>';
-  const matched = rows();
+  const matched = serverPaging ? serverRows : rows();
+  const matchedCount = serverPaging ? serverTotal : matched.length;
   const pageSize = 50;
-  const pageCount = Math.max(1, Math.ceil(matched.length / pageSize));
+  const pageCount = Math.max(1, Math.ceil(matchedCount / pageSize));
   listPage = Math.max(1, Math.min(listPage, pageCount));
   const start = (listPage - 1) * pageSize;
-  const visible = matched.slice(start, start + pageSize);
+  const visible = serverPaging
+    ? matched
+    : matched.slice(start, start + pageSize);
   $("#table-body").innerHTML = visible
     .map(
       (r) =>
@@ -636,12 +678,35 @@ function renderTable() {
     ? "<strong>검색 결과가 없습니다</strong>검색어나 필터를 변경해 주세요."
     : `<strong>아직 등록된 ${s.singular} 정보가 없습니다</strong>첫 번째 ${s.singular} 정보를 등록해 관리를 시작하세요.<br><button class="primary" data-add>+ ${s.singular} 등록</button>`;
   $("#result-count").textContent =
-    `전체 ${data[page].length}건 · 검색 결과 ${matched.length}건 · ${matched.length ? start + 1 : 0}–${start + visible.length}건 표시`;
+    `전체 ${serverPaging ? serverMeta.counts[page] : data[page].length}건 · 검색 결과 ${matchedCount}건 · ${matchedCount ? start + 1 : 0}–${start + visible.length}건 표시`;
   $("#page-status").textContent = `${listPage} / ${pageCount} 페이지`;
   $("#previous-page").disabled = listPage === 1;
   $("#next-page").disabled = listPage === pageCount;
 }
-function openEditor(id = null) {
+async function openEditor(id = null) {
+  if (busy) return;
+  const request = ++editorRequest,
+    generation = authGeneration,
+    table = page;
+  if (serverPaging) {
+    try {
+      if (id) {
+        const detail = await cloud.query(table, { p_mode: "detail", p_id: id });
+        if (
+          request !== editorRequest ||
+          generation !== authGeneration ||
+          table !== page
+        )
+          return;
+        if (!detail.rows.length)
+          throw Error("삭제된 기록입니다. 목록을 새로고침해 주세요.");
+        mergeServerData(detail.data);
+      }
+    } catch (error) {
+      toast(error.message);
+      return;
+    }
+  }
   if (page === "lots" && (!cloudMode || !lotsAvailable)) {
     toast("제조 LOT DB 업데이트와 클라우드 로그인이 필요합니다.");
     return;
@@ -748,7 +813,8 @@ function openEditor(id = null) {
                 ? "출고 이력이 있는 제품은 출고 상태가 유지됩니다."
                 : "";
       if (page === "shipments" && key === "name")
-        help = "레일리프트·레일방제기 등 출고 제품명을 직접 입력하세요. 수주 모델명과 별도로 저장됩니다.";
+        help =
+          "레일리프트·레일방제기 등 출고 제품명을 직접 입력하세요. 수주 모델명과 별도로 저장됩니다.";
       if (type === "lot")
         help =
           "모델명만 LOT와 일치해야 합니다. 사양과 생산일은 연결 조건으로 검사하지 않습니다. 마감 LOT에는 새 제품을 연결할 수 없습니다.";
@@ -859,7 +925,10 @@ function openEditor(id = null) {
     syncServiceBilling();
   }
   if (page === "service") setupServiceProductSearch(row);
-  if (page === "lots" && id) renderLotHistory(row);
+  if (page === "lots" && id) {
+    if (serverPaging) setupRemoteLotHistory(row);
+    else renderLotHistory(row);
+  }
   if (
     page === "products" &&
     unknownProductionAvailable &&
@@ -886,6 +955,7 @@ function openEditor(id = null) {
     syncUnknownShipment();
   }
   $("#editor").showModal();
+  if (serverPaging) setupRemoteSelectors(row);
 }
 $("#record-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1084,7 +1154,7 @@ $("#record-form").addEventListener("submit", async (e) => {
     render();
     toast(
       page === "products" && !old
-        ? `제품이 등록되었습니다: ${data.products.find((p) => p.id === record.id)?.serial}`
+        ? `제품이 등록되었습니다: ${serverPaging ? savedSerial : data.products.find((p) => p.id === record.id)?.serial}`
         : "정보가 저장되었습니다.",
     );
   } catch (err) {
@@ -1120,7 +1190,8 @@ $("#delete-button").addEventListener("click", async () => {
     setBusy(true);
     if (cloudMode) {
       const old = data[page].find((r) => r.id === editing);
-      applySnapshot(await cloud.remove(page, editing, old.version));
+      await cloud.remove(page, editing, old.version);
+      await refreshServer();
     } else {
       await persist(next);
     }
@@ -1135,7 +1206,8 @@ $("#delete-button").addEventListener("click", async () => {
 });
 $("#navigation").addEventListener("click", (e) => {
   const b = e.target.closest("[data-page]");
-  if (!b) return;
+  if (!b || busy) return;
+  editorRequest++;
   page = b.dataset.page;
   listPage = 1;
   filter = "전체";
@@ -1160,9 +1232,19 @@ $("#empty-state").addEventListener("click", (e) => {
 $("#add-button").addEventListener("click", () => openEditor());
 $("#search").addEventListener("input", () => {
   listPage = 1;
-  renderTable();
+  if (serverPaging) {
+    clearTimeout(searchTimer);
+    listRequest++;
+    $("#table-body").setAttribute("aria-busy", "true");
+    $("#previous-page").disabled = true;
+    $("#next-page").disabled = true;
+    searchTimer = setTimeout(renderTable, 200);
+  } else renderTable();
 });
-for (const [id, step] of [["previous-page", -1], ["next-page", 1]]) {
+for (const [id, step] of [
+  ["previous-page", -1],
+  ["next-page", 1],
+]) {
   $("#" + id).addEventListener("click", () => {
     listPage += step;
     renderTable();
@@ -1182,7 +1264,29 @@ $("#editor").addEventListener("click", (e) => {
       e.target.close();
   }
 });
-$("#export-button").addEventListener("click", () => {
+$("#export-button").addEventListener("click", async () => {
+  const table = page,
+    generation = authGeneration;
+  let exportRows = rows();
+  if (serverPaging) {
+    const button = $("#export-button");
+    button.disabled = true;
+    try {
+      exportRows = [];
+      const options = { p_search: $("#search").value.trim(), p_filter: filter };
+      for (let n = 1; ; n++) {
+        const batch = await cloud.query(table, { ...options, p_page: n });
+        if (generation !== authGeneration || page !== table) return;
+        exportRows.push(...batch.rows);
+        if (n * batch.pageSize >= batch.total || !batch.rows.length) break;
+      }
+    } catch (error) {
+      toast(error.message);
+      return;
+    } finally {
+      button.disabled = false;
+    }
+  }
   const fields = schemas[page].fields;
   const cell = (v) =>
     '"' +
@@ -1194,7 +1298,9 @@ $("#export-button").addEventListener("click", () => {
     "\uFEFF" +
     [
       fields.map((f) => cell(f[1])).join(","),
-      ...rows().map((r) => fields.map(([k]) => cell(value(r, k))).join(",")),
+      ...exportRows.map((r) =>
+        fields.map(([k]) => cell(value(r, k))).join(","),
+      ),
     ].join("\r\n");
   const url = URL.createObjectURL(
     new Blob([csv], { type: "text/csv;charset=utf-8" }),
@@ -1241,6 +1347,12 @@ function showApp() {
 }
 function showLogin() {
   authGeneration++;
+  listRequest++;
+  editorRequest++;
+  clearTimeout(searchTimer);
+  serverPaging = false;
+  serverMeta = null;
+  serverRows = [];
   if ($("#editor").open) $("#editor").close();
   data = {
     products: [],
@@ -1255,6 +1367,7 @@ function showLogin() {
   $("#login-password").value = "";
   page = "products";
   filter = "전체";
+  listPage = 1;
   $("#search").value = "";
   $("#sync-error").hidden = true;
 }
@@ -1265,6 +1378,7 @@ async function loadCloud() {
   applySnapshot(snapshot);
   cloudMode = true;
   showApp();
+  await pendingList;
 }
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1324,6 +1438,7 @@ $("#refresh-button").addEventListener("click", async () => {
 });
 $("#demo-button").addEventListener("click", () => {
   cloudMode = false;
+  serverPaging = false;
   role = "admin";
   loadLocal();
   showApp();
@@ -1387,6 +1502,10 @@ function configureShipmentItem(initial) {
       $("#customer-results").hidden = true;
       $("#customer-search").setAttribute("aria-expanded", "false");
     }
+  }
+  if (serverPaging) {
+    if (!quantityMode) reloadShipmentProducts?.(initial);
+    return;
   }
   const old = data.shipments.find((s) => s.id === editing);
   const options = data.products.filter(
@@ -1475,7 +1594,7 @@ function setupServiceProductSearch(row) {
         .join(" · "),
     ]),
   );
-  const description = (p) => descriptions.get(p.id) || "";
+  const description = (p) => p._description || descriptions.get(p.id) || "";
   const indexed = data.products
     .map((p) => ({
       product: p,
@@ -1487,12 +1606,15 @@ function setupServiceProductSearch(row) {
         a.product.serial.localeCompare(b.product.serial),
     );
   function close() {
+    lookupRequest++;
+    list.setAttribute("aria-busy", "false");
     list.hidden = true;
     input.setAttribute("aria-expanded", "false");
     input.removeAttribute("aria-activedescendant");
     active = -1;
   }
   function choose(p) {
+    if (serverPaging && !product(p.id)) data.products.push(p);
     hidden.value = p.id;
     input.value = p.serial;
     summary.textContent = description(p);
@@ -1500,14 +1622,42 @@ function setupServiceProductSearch(row) {
     input.focus();
     close();
   }
-  function search() {
+  let lookupRequest = 0;
+  async function search() {
+    const request = ++lookupRequest,
+      generation = authGeneration;
     const q = input.value.trim().toLowerCase();
-    matches = indexed
-      .filter((entry) => !q || entry.query.includes(q))
-      .map((entry) => entry.product);
-    const total = matches.length;
+    let remote;
+    if (serverPaging) {
+      matches = [];
+      list.setAttribute("aria-busy", "true");
+      try {
+        remote = await cloud.query("products", {
+          p_mode: "lookup",
+          p_search: q,
+        });
+        if (
+          request !== lookupRequest ||
+          generation !== authGeneration ||
+          !input.isConnected ||
+          input.value.trim().toLowerCase() !== q
+        )
+          return;
+        mergeServerData(remote.data);
+      } catch (error) {
+        if (request === lookupRequest) pickerError(input, list, error);
+        return;
+      }
+    }
+    matches = remote
+      ? remote.rows
+      : indexed
+          .filter((entry) => !q || entry.query.includes(q))
+          .map((entry) => entry.product);
+    const total = remote ? remote.total : matches.length;
     matches = matches.slice(0, 20);
     active = -1;
+    list.setAttribute("aria-busy", "false");
     list.innerHTML = matches.length
       ? matches
           .map(
@@ -1625,34 +1775,67 @@ function setupCustomerSearch(row) {
     phone: (c.phone || "").replace(/\D/g, ""),
   }));
   function close() {
+    lookupRequest++;
+    list.setAttribute("aria-busy", "false");
     list.hidden = true;
     input.setAttribute("aria-expanded", "false");
     input.removeAttribute("aria-activedescendant");
     active = -1;
   }
   function choose(c) {
+    if (serverPaging && !customer(c.id)) data.customers.push(c);
     hidden.value = c.id;
     updateCustomerDisplay(c.id);
     input.focus();
     close();
   }
-  function search() {
+  let lookupRequest = 0;
+  async function search() {
     if (input.readOnly) return;
     const q = input.value.trim().toLowerCase(),
       digits = /^[0-9+()\-\s]+$/.test(q) ? q.replace(/\D/g, "") : "";
-    matches = entries
-      .filter(
-        (e) => !q || e.text.includes(q) || (digits && e.phone.includes(digits)),
-      )
-      .sort(
-        (a, b) =>
-          Number(b.c.code.toLowerCase() === q) -
-          Number(a.c.code.toLowerCase() === q),
-      )
-      .map((e) => e.c);
-    const total = matches.length;
+    const request = ++lookupRequest,
+      generation = authGeneration;
+    let remote;
+    if (serverPaging) {
+      matches = [];
+      list.setAttribute("aria-busy", "true");
+      try {
+        remote = await cloud.query("customers", {
+          p_mode: "lookup",
+          p_search: digits || q,
+        });
+        if (
+          request !== lookupRequest ||
+          generation !== authGeneration ||
+          !input.isConnected ||
+          input.readOnly ||
+          input.value.trim().toLowerCase() !== q
+        )
+          return;
+        mergeServerData(remote.data);
+      } catch (error) {
+        if (request === lookupRequest) pickerError(input, list, error);
+        return;
+      }
+    }
+    matches = remote
+      ? remote.rows
+      : entries
+          .filter(
+            (e) =>
+              !q || e.text.includes(q) || (digits && e.phone.includes(digits)),
+          )
+          .sort(
+            (a, b) =>
+              Number(b.c.code.toLowerCase() === q) -
+              Number(a.c.code.toLowerCase() === q),
+          )
+          .map((e) => e.c);
+    const total = remote ? remote.total : matches.length;
     matches = matches.slice(0, 20);
     active = -1;
+    list.setAttribute("aria-busy", "false");
     list.innerHTML = matches.length
       ? matches
           .map(
@@ -1730,4 +1913,280 @@ function setupCustomerSearch(row) {
     }, 0),
   );
   updateCustomerDisplay(row.customerId);
+}
+
+// Cloud data is bounded to the current page and active editor selections.
+function mergeServerData(bundle) {
+  const pinned = new Set(serverRows.map((r) => r.id));
+  if (editing) pinned.add(editing);
+  for (const key of ["productId", "customerId", "lotId"]) {
+    const id = $("#field-" + key)?.value;
+    if (id) pinned.add(id);
+  }
+  const itemIds = new Set();
+  for (const key of ["productId", "lotId", "orderItemId"]) {
+    const field = $("#field-" + key);
+    if (field?.options)
+      for (const option of field.options) {
+        pinned.add(option.value);
+        if (key === "orderItemId") itemIds.add(option.value);
+      }
+  }
+  const selectedItem = $("#field-orderItemId")?.value;
+  for (const order of data.orders)
+    if (
+      (order.items || []).some(
+        (i) => i.id === selectedItem || itemIds.has(i.id),
+      )
+    )
+      pinned.add(order.id);
+  for (const order of data.orders)
+    if (pinned.has(order.id)) pinned.add(order.customerId);
+  for (const p of data.products)
+    if (pinned.has(p.id) && p.lotId) pinned.add(p.lotId);
+  for (const key of Object.keys(data)) {
+    const incoming = bundle[key] || [];
+    const map = new Map(
+      data[key].filter((row) => pinned.has(row.id)).map((row) => [row.id, row]),
+    );
+    for (const row of incoming) map.set(row.id, row);
+    data[key] = [...map.values()];
+  }
+}
+function pickerError(input, list, error) {
+  if (!input.isConnected) return;
+  list.setAttribute("aria-busy", "false");
+  list.innerHTML = `<p role="alert">${esc(error.message)} 검색어를 다시 입력해 주세요.</p>`;
+  list.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+}
+async function refreshServer() {
+  const generation = authGeneration;
+  const summary = await cloud.snapshot();
+  if (generation !== authGeneration || !cloud.hasSession()) return;
+  applySnapshot(summary);
+}
+function fetchServerList() {
+  const request = ++listRequest,
+    generation = authGeneration,
+    table = page;
+  const query = $("#search").value.trim(),
+    selectedFilter = filter;
+  $("#table-body").innerHTML = '<tr><td colspan="20">불러오는 중…</td></tr>';
+  $("#empty-state").hidden = true;
+  $("#previous-page").disabled = true;
+  $("#next-page").disabled = true;
+  $("#page-status").textContent = "불러오는 중…";
+  $("#table-body").setAttribute("aria-busy", "true");
+  pendingList = (async () => {
+    try {
+      const result = await cloud.query(table, {
+        p_search: query,
+        p_filter: selectedFilter,
+        p_page: listPage,
+      });
+      if (
+        request !== listRequest ||
+        generation !== authGeneration ||
+        table !== page
+      )
+        return;
+      data = result.data;
+      serverRows = result.rows;
+      serverTotal = result.total;
+      listPage = result.page;
+      drawTable();
+      $("#sync-error").hidden = true;
+    } catch (error) {
+      if (request !== listRequest || generation !== authGeneration) return;
+      $("#table-body").innerHTML = "";
+      $("#page-status").textContent = "조회 실패";
+      $("#sync-error").hidden = false;
+      $("#sync-error").textContent =
+        error.message + " 새로고침으로 다시 시도해 주세요.";
+    } finally {
+      if (request === listRequest)
+        $("#table-body").setAttribute("aria-busy", "false");
+    }
+  })();
+  return pendingList;
+}
+function setupRemoteSelectors(row) {
+  reloadShipmentProducts = null;
+  if ($("#field-lotId"))
+    remoteSelect(
+      "lotId",
+      "lots",
+      row.lotId,
+      (l) =>
+        `${l.code} · ${l.model} / ${l.specification || "사양 없음"} · ${l.status}`,
+    );
+  if ($("#field-orderItemId"))
+    remoteSelect("orderItemId", "orders", row.orderItemId, null);
+  if (page === "shipments")
+    reloadShipmentProducts = remoteSelect(
+      "productId",
+      "products",
+      row.productId,
+      (p) => `${p.serial} · ${p.code}`,
+    );
+}
+function remoteSelect(key, table, current, label) {
+  const select = $("#field-" + key),
+    labelText = schemas[page].fields.find((f) => f[0] === key)[1];
+  const input = document.createElement("input");
+  input.type = "search";
+  input.placeholder = `${labelText} 검색`;
+  input.setAttribute("aria-label", `${labelText} 검색`);
+  select.before(input);
+  const controls = document.createElement("div");
+  controls.className = "lookup-pages";
+  controls.innerHTML =
+    '<button type="button" class="secondary">이전</button><small role="status"></small><button type="button" class="secondary">다음</button>';
+  select.after(controls);
+  const [previous, next] = controls.querySelectorAll("button"),
+    statusLabel = controls.querySelector("small");
+  let n = 1,
+    sequence = 0,
+    timer;
+  async function load(reset = false) {
+    if (reset) n = 1;
+    const request = ++sequence,
+      generation = authGeneration;
+    previous.disabled = next.disabled = true;
+    statusLabel.textContent = "불러오는 중…";
+    try {
+      const result = await cloud.query(table, {
+        p_mode: "options",
+        p_search: input.value.trim(),
+        p_page: n,
+        p_current: current || null,
+        p_link:
+          table === "products" ? $("#field-orderItemId")?.value || null : null,
+      });
+      if (
+        request !== sequence ||
+        generation !== authGeneration ||
+        !select.isConnected
+      )
+        return;
+      mergeServerData(result.data);
+      n = result.page;
+      const opts =
+        table === "orders"
+          ? result.rows.flatMap((o) =>
+              o.items
+                .filter(
+                  (i) =>
+                    (o.stage !== "취소" && i.delivered < i.quantity) ||
+                    i.id === current,
+                )
+                .map((i) => [
+                  i.id,
+                  `${o.number} · ${customer(o.customerId)?.name || o.customer_name} · ${i.model} / ${i.specification || "사양 없음"} (남은 ${i.quantity - i.delivered}대)`,
+                ]),
+            )
+          : result.rows.map((r) => [r.id, label(r)]);
+      const selected = select.value || "";
+      const selectedLabel = select.selectedOptions[0]?.textContent;
+      if (selected && !opts.some(([id]) => id === selected))
+        opts.unshift([selected, selectedLabel || "현재 선택"]);
+      select.innerHTML =
+        '<option value="">선택해 주세요</option>' +
+        opts
+          .map(
+            ([id, text]) => `<option value="${esc(id)}">${esc(text)}</option>`,
+          )
+          .join("");
+      select.value = selected;
+      statusLabel.textContent = `${n} / ${Math.max(1, Math.ceil(result.total / result.pageSize))} 페이지 · ${result.total}건`;
+      previous.disabled = n === 1;
+      next.disabled = n * result.pageSize >= result.total;
+    } catch (error) {
+      if (request === sequence)
+        statusLabel.textContent =
+          error.message + " 검색어를 다시 입력해 주세요.";
+    }
+  }
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    sequence++;
+    timer = setTimeout(() => load(true), 200);
+  });
+  previous.addEventListener("click", () => {
+    n--;
+    load();
+  });
+  next.addEventListener("click", () => {
+    n++;
+    load();
+  });
+  load();
+  return (initial) => {
+    if (!initial) select.value = "";
+    load(true);
+  };
+}
+function setupRemoteLotHistory(lot) {
+  const section = document.createElement("section");
+  section.className = "lot-history";
+  section.innerHTML = "<h2>LOT 연결 이력</h2>";
+  $("#form-fields").append(section);
+  for (const [table, title] of [
+    ["products", "제품"],
+    ["shipments", "출고"],
+    ["service", "A/S"],
+  ]) {
+    const block = document.createElement("div");
+    block.innerHTML = `<h3>${title}</h3><div class="history-records"></div><div class="lookup-pages"><button type="button" class="secondary">이전</button><small role="status"></small><button type="button" class="secondary">다음</button></div>`;
+    section.append(block);
+    const [prev, next] = block.querySelectorAll("button"),
+      info = block.querySelector("small"),
+      records = block.querySelector(".history-records");
+    let n = 1,
+      sequence = 0;
+    async function load() {
+      const request = ++sequence,
+        generation = authGeneration;
+      prev.disabled = next.disabled = true;
+      try {
+        const result = await cloud.query(table, {
+          p_mode: "history",
+          p_lot: lot.id,
+          p_page: n,
+        });
+        if (
+          request !== sequence ||
+          generation !== authGeneration ||
+          !block.isConnected
+        )
+          return;
+        n = result.page;
+        const texts = result.rows.map((r) =>
+          table === "products"
+            ? `${r.serial} · ${r.code} · ${r.effective_status}`
+            : table === "shipments"
+              ? `${r.date || "미상"} · ${r.customer_name} · ${r.product_serial}`
+              : `${r.received} · ${r.product_serial} · ${r.symptom} · ${r.completed ? "완료" : "진행중"}`,
+        );
+        records.innerHTML = texts.length
+          ? `<ul>${texts.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>`
+          : "<p>연결된 이력이 없습니다.</p>";
+        info.textContent = `${result.total}건 · ${n} / ${Math.max(1, Math.ceil(result.total / result.pageSize))} 페이지`;
+        prev.disabled = n === 1;
+        next.disabled = n * result.pageSize >= result.total;
+      } catch (error) {
+        info.textContent = error.message;
+      }
+    }
+    prev.onclick = () => {
+      n--;
+      load();
+    };
+    next.onclick = () => {
+      n++;
+      load();
+    };
+    load();
+  }
 }

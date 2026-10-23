@@ -1061,3 +1061,19 @@ dialog::backdrop {
   opacity: 0.45;
   cursor: default;
 }
+
+.lookup-pages {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.lookup-pages button {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.lookup-pages button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

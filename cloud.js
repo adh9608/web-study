@@ -111,7 +111,7 @@ window.FlowCloud = (() => {
     )
       return "계정의 이메일 확인 상태가 미완료입니다. Supabase에서 Auto Confirm User 설정을 확인해 주세요.";
     if (error?.code === "PGRST202")
-      return "DB 로그인 연결 함수가 없습니다. 관리자가 Supabase 설치 SQL을 실행해야 합니다.";
+      return "DB 업데이트가 필요합니다. 관리자가 최신 통합 SQL을 실행한 뒤 새로고침해 주세요.";
     if (m.includes("Invalid API key") || m.includes("Invalid API Key"))
       return "Supabase 공개 연결 키가 올바른지 확인해 주세요.";
     if (status === 429)
@@ -239,15 +239,18 @@ window.FlowCloud = (() => {
         });
     },
     forget: () => remember(null),
-    snapshot: () => rpc("flow_snapshot"),
+    snapshot: () => rpc("flow_summary"),
+    query: (table, options = {}) =>
+      rpc("flow_query", { p_table: table, ...options }),
     save: (table, record, expectedVersion) =>
-      rpc("flow_save", {
+      rpc("flow_write", {
         p_table: table,
         p_record: record,
         p_expected_version: expectedVersion ?? null,
       }),
     remove: (table, id, version) =>
-      rpc("flow_delete", {
+      rpc("flow_write", {
+        p_delete: true,
         p_table: table,
         p_id: id,
         p_expected_version: version,
