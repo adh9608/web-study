@@ -1240,6 +1240,10 @@ const { chromium } = require("playwright");
     mimeType: "application/pdf",
     buffer: pdfBytes,
   });
+  // A file input's cancel event bubbles; it must not close its parent dialog.
+  await mp.locator("#product-file-input").dispatchEvent("cancel", { bubbles: true });
+  assert.equal(await mp.locator("#product-detail").isVisible(), true);
+  assert.equal(await mp.locator("#product-file-input").evaluate((e) => e.files.length), 1);
   await mp.locator("#upload-product-files").click();
   await mp
     .locator("#product-file-status")
@@ -1311,6 +1315,9 @@ const { chromium } = require("playwright");
     path: "test-results/product-detail-mobile.png",
     fullPage: true,
   });
+  await mp.locator("#product-detail").dispatchEvent("cancel", { cancelable: true });
+  assert.equal(await mp.locator("#product-detail").isVisible(), false);
+  await openDetail(mp, linkedProduct.serial);
   await mp.locator("#close-product-detail").click();
   await mp.locator("[data-edit]").click();
   await mp.locator("#editor").waitFor({ state: "visible" });

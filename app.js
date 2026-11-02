@@ -2486,7 +2486,11 @@ async function loadProductFiles() {
 $("#close-product-detail").onclick = () => {
   if (!fileMutation) closeProductDetail();
 };
+$("#product-file-input").addEventListener("cancel", (e) => {
+  e.stopPropagation();
+});
 $("#product-detail").addEventListener("cancel", (e) => {
+  if (e.target !== e.currentTarget) return;
   e.preventDefault();
   if (!fileMutation) closeProductDetail();
 });
