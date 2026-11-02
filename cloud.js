@@ -48,6 +48,10 @@ window.FlowCloud = (() => {
   }
   function message(error, status) {
     const m = error?.message || error?.msg || error?.error_description || "";
+    if (m.includes("PRODUCT_HAS_FILES"))
+      return "첨부파일이 있는 제품입니다. 제품 상세창에서 첨부파일을 먼저 삭제하세요.";
+    if (m.includes("PRODUCT_NOT_FOUND"))
+      return "제품이 삭제되었거나 존재하지 않습니다. 목록을 새로고침해 주세요.";
     if (m.includes("PRODUCTION_REQUIRED"))
       return "자동 시리얼 생성에는 실제 생산일이 필요합니다.";
     const lotErrors = {
@@ -206,8 +210,109 @@ window.FlowCloud = (() => {
       return request("/rest/v1/rpc/" + name, { body, auth: true });
     }
   }
+  async function fileRequest(
+    path,
+    { method = "GET", body, mime, metadata } = {},
+    retried = false,
+  ) {
+    if (!session) throw Error("로그인이 필요합니다.");
+    if ((session.expires_at || 0) * 1000 < Date.now() + 60000) await refresh();
+    if (!session) throw Error("로그인이 필요합니다.");
+    let response;
+    try {
+      response = await fetch(url + "/storage/v1" + path, {
+        method,
+        body,
+        headers: {
+          apikey: key,
+          Authorization: "Bearer " + session.access_token,
+          ...(mime ? { "Content-Type": mime } : {}),
+          ...(metadata
+            ? {
+                "x-metadata": btoa(
+                  Array.from(
+                    new TextEncoder().encode(JSON.stringify(metadata)),
+                    (b) => String.fromCharCode(b),
+                  ).join(""),
+                ),
+              }
+            : {}),
+        },
+        signal: AbortSignal.timeout(120000),
+      });
+    } catch {
+      throw Error(
+        "파일 요청에 실패했습니다. 인터넷 연결을 확인하고 첨부 목록을 새로고침해 주세요.",
+      );
+    }
+    if (response.status === 401 && !retried) {
+      await refresh();
+      return fileRequest(path, { method, body, mime, metadata }, true);
+    }
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      if (response.status === 413)
+        throw Error("파일은 10MB 이하만 첨부할 수 있습니다.");
+      if (
+        response.status === 404 ||
+        error?.message?.includes("Bucket not found")
+      )
+        throw Error(
+          "파일이 없거나 첨부파일 DB 업데이트가 필요합니다. 목록을 새로고침해 주세요.",
+        );
+      throw Error(
+        "파일을 처리하지 못했습니다. 접근 권한과 파일 형식·크기를 확인해 주세요.",
+      );
+    }
+    return response;
+  }
+  const filePath = (path) => path.split("/").map(encodeURIComponent).join("/");
   return {
     configured,
+    productDetail: (id, servicePage = 1) =>
+      rpc("flow_product_detail", { p_id: id, p_service_page: servicePage }),
+    productFiles: (id, page = 1) =>
+      rpc("flow_product_files", { p_id: id, p_page: page }),
+    async uploadProductFile(id, file) {
+      const types = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "application/pdf": "pdf",
+      };
+      if (!types[file.type])
+        throw Error("JPEG·PNG·WebP 사진 또는 PDF 파일만 첨부할 수 있습니다.");
+      if (!file.size || file.size > 10 * 1024 * 1024)
+        throw Error("파일은 0바이트보다 크고 10MB 이하여야 합니다.");
+      let name =
+        file.name
+          .normalize("NFC")
+          .replace(/[\/\\\x00-\x1f\x7f]/g, "_")
+          .slice(0, 120) || `첨부.${types[file.type]}`;
+      if (!/\.(pdf|jpe?g|png|webp)$/i.test(name))
+        name += "." + types[file.type];
+      const path = `${id}/${crypto.randomUUID()}/attachment.${types[file.type]}`;
+      await fileRequest("/object/product-files/" + filePath(path), {
+        method: "POST",
+        body: file,
+        mime: file.type,
+        metadata: { originalName: name },
+      });
+      return path;
+    },
+    async downloadProductFile(path) {
+      const response = await fileRequest(
+        "/object/authenticated/product-files/" + filePath(path),
+      );
+      return response.blob();
+    },
+    async deleteProductFile(path) {
+      await fileRequest("/object/product-files", {
+        method: "DELETE",
+        body: JSON.stringify({ prefixes: [path] }),
+        mime: "application/json",
+      });
+    },
     hasSession: () => !!session,
     username: () => {
       const email = session?.user?.email || "";

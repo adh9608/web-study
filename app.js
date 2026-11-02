@@ -140,6 +140,13 @@ if (loginInput) {
     label.firstChild.textContent = "아이디";
 }
 
+let detailProductId = null,
+  detailRequest = 0,
+  fileListRequest = 0,
+  detailFiles = [],
+  detailFilePage = 1,
+  detailFileTotal = 0,
+  fileMutation = false;
 let serverPaging = false,
   serverMeta = null,
   serverRows = [],
@@ -660,10 +667,12 @@ function drawTable() {
   $("#table-body").innerHTML = visible
     .map(
       (r) =>
-        "<tr>" +
+        `<tr ${page === "products" ? `data-product-row="${esc(r.id)}"` : ""}>` +
         s.fields
           .map(([key]) => {
             const v = value(r, key);
+            if (page === "products" && key === "serial")
+              return `<td><button type="button" class="product-detail-link" data-product-detail="${esc(r.id)}">${esc(v)}</button></td>`;
             return `<td>${["status", "inspection", "stage", "paymentStatus"].includes(key) ? badge(v) : esc(v === 0 ? 0 : v || "—")}</td>`;
           })
           .join("") +
@@ -954,6 +963,17 @@ async function openEditor(id = null) {
     $("#shipment-date-unknown").addEventListener("change", syncUnknownShipment);
     syncUnknownShipment();
   }
+  if (page === "products") {
+    $("#form-fields").insertAdjacentHTML(
+      "beforeend",
+      id
+        ? '<section class="field wide"><h3>첨부파일·연결 정보</h3><button type="button" class="secondary" id="editor-product-detail">제품 상세·첨부파일 열기</button></section>'
+        : '<p class="field wide">제품 저장 후 시리얼번호를 클릭하면 첨부파일과 연결 정보를 관리할 수 있습니다.</p>',
+    );
+    $("#editor-product-detail")?.addEventListener("click", () =>
+      openProductDetail(id),
+    );
+  }
   $("#editor").showModal();
   if (serverPaging) setupRemoteSelectors(row);
 }
@@ -1224,7 +1244,13 @@ $("#filter-tabs").addEventListener("click", (e) => {
 });
 $("#table-body").addEventListener("click", (e) => {
   const b = e.target.closest("[data-edit]");
-  if (b) openEditor(b.dataset.edit);
+  if (b) {
+    openEditor(b.dataset.edit);
+    return;
+  }
+  const productRow = e.target.closest("[data-product-row]");
+  if (productRow && !e.target.closest("a,input,select,textarea"))
+    openProductDetail(productRow.dataset.productRow);
 });
 $("#empty-state").addEventListener("click", (e) => {
   if (e.target.closest("[data-add]")) openEditor();
@@ -1346,6 +1372,7 @@ function showApp() {
   render();
 }
 function showLogin() {
+  closeProductDetail();
   authGeneration++;
   listRequest++;
   editorRequest++;
@@ -2190,3 +2217,385 @@ function setupRemoteLotHistory(lot) {
     load();
   }
 }
+
+function closeProductDetail() {
+  detailRequest++;
+  fileListRequest++;
+  detailProductId = null;
+  $("#product-detail").close();
+  $("#product-detail-content").innerHTML = "";
+  $("#product-file-list").innerHTML = "";
+  $("#product-file-input").value = "";
+  $("#product-file-section").hidden = true;
+}
+async function openProductDetail(id) {
+  if (busy || fileMutation) return;
+  detailProductId = id;
+  detailFiles = [];
+  detailFilePage = 1;
+  detailFileTotal = 0;
+  $("#product-detail-title").textContent = "제품 상세";
+  $("#product-detail-content").textContent = "불러오는 중…";
+  $("#product-file-section").hidden = true;
+  $("#product-file-input").value = "";
+  $("#product-file-list").innerHTML = "";
+  $("#product-file-error").textContent = "";
+  $("#product-file-status").textContent = "";
+  $("#edit-detail-product").hidden = $("#editor").open;
+  $("#edit-detail-product").disabled = true;
+  if (!$("#product-detail").open) $("#product-detail").showModal();
+  await loadProductDetail(1);
+}
+const detailPairs = (pairs) =>
+  '<dl class="detail-grid">' +
+  pairs
+    .map(
+      ([label, value]) =>
+        `<div><dt>${esc(label)}</dt><dd>${esc(value === 0 ? 0 : value || "—")}</dd></div>`,
+    )
+    .join("") +
+  "</dl>";
+function renderProductDetail(result) {
+  const p = result.product,
+    s = result.shipment,
+    c = result.customer,
+    o = result.order,
+    l = result.lot;
+  $("#product-detail-title").textContent = `제품 상세 · ${p.serial}`;
+  let content =
+    "<section><h3>제품 정보</h3>" +
+    detailPairs([
+      ["시리얼번호", p.serial],
+      ["제품 구분", productCategories[p.category] || "미분류"],
+      ["모델명", p.code],
+      ["사양", p.rail],
+      ["생산일", p.production || "미상"],
+      ["검사", p.inspection],
+      ["상태", p.effective_status || p.status],
+      ["비고", p.notes],
+    ]) +
+    "</section><section><h3>제조 LOT</h3>";
+  content += l
+    ? detailPairs([
+        ["LOT 번호", l.code],
+        ["모델명", l.model],
+        ["사양", l.specification],
+        ["생산 시작일", l.started],
+        ["종료일", l.ended],
+        ["검사", l.inspection],
+        ["상태", l.status],
+      ])
+    : "<p>연결된 제조 LOT가 없습니다.</p>";
+  content += "</section><section><h3>고객·출고</h3>";
+  content += s
+    ? detailPairs([
+        ["고객코드", c?.code],
+        ["고객명", c?.name],
+        ["연락처", c?.phone],
+        ["주소", c?.address],
+        ["출고일", s.date || "미상"],
+        ["출고 제품명", s.name],
+        ["출고 수량", s.quantity],
+        ["출고 비고", s.notes],
+      ])
+    : "<p>연결된 출고·고객 정보가 없습니다.</p>";
+  content += "</section><section><h3>수주</h3>";
+  if (o) {
+    const item = o.items.find((i) => i.id === s.orderItemId);
+    content += detailPairs([
+      ["수주번호", o.number],
+      ["접수일", o.received],
+      ["납기일", o.due],
+      ["진행 상태", o.effective_stage],
+      [
+        "연결 품목",
+        item
+          ? `${item.model}${item.specification ? " / " + item.specification : ""}`
+          : "—",
+      ],
+      ["품목 주문 수량", item?.quantity],
+      ["품목 출고 수량", item?.delivered],
+      ["품목 남은 수량", item ? item.quantity - item.delivered : "—"],
+      ["수주 전체 수량", o.total],
+      ["수주 전체 출고 수량", o.delivered],
+      ["수주 전체 남은 수량", o.remaining],
+      ["수주 비고", o.notes],
+    ]);
+  } else content += "<p>연결된 수주가 없습니다.</p>";
+  content += `</section><section><h3>A/S 이력 · ${result.service_total}건</h3>`;
+  content += result.service.length
+    ? result.service
+        .map(
+          (a) =>
+            '<article class="service-history">' +
+            detailPairs([
+              ["접수일", a.received],
+              ["증상", a.symptom],
+              ["조치", a.action],
+              ["담당", a.owner],
+              ["완료일", a.completed],
+              ["상태", a.completed ? "완료" : "진행중"],
+              ["유상/무상", a.billingType],
+              ["청구금액", Number(a.chargeAmount || 0).toLocaleString() + "원"],
+              ["입금액", Number(a.paidAmount || 0).toLocaleString() + "원"],
+              ["입금상태", a.payment_status || paymentStatus(a)],
+              [
+                "미수금",
+                (
+                  Number(a.chargeAmount || 0) - Number(a.paidAmount || 0)
+                ).toLocaleString() + "원",
+              ],
+              ["최근 입금일", a.paidDate],
+            ]) +
+            "</article>",
+        )
+        .join("")
+    : "<p>등록된 A/S 이력이 없습니다.</p>";
+  const pages = Math.max(1, Math.ceil(result.service_total / 20));
+  content += `<nav class="pagination" aria-label="제품 A/S 이력 페이지"><button type="button" class="secondary" data-service-page="${result.service_page - 1}" ${result.service_page === 1 ? "disabled" : ""}>이전</button><span>${result.service_page} / ${pages} 페이지</span><button type="button" class="secondary" data-service-page="${result.service_page + 1}" ${result.service_page === pages ? "disabled" : ""}>다음</button></nav></section>`;
+  $("#product-detail-content").innerHTML = content;
+}
+async function loadProductDetail(servicePage) {
+  const id = detailProductId,
+    request = ++detailRequest,
+    generation = authGeneration;
+  try {
+    let result;
+    if (cloudMode) result = await cloud.productDetail(id, servicePage);
+    else {
+      const p = product(id);
+      if (!p) throw Error("제품이 없습니다.");
+      const s = data.shipments.find((x) => x.productId === id) || null,
+        link = s ? linkedItem(s.orderItemId) : null;
+      const repairs = data.service.filter((x) => x.productId === id);
+      const pg = Math.max(
+        1,
+        Math.min(servicePage, Math.ceil(repairs.length / 20) || 1),
+      );
+      result = {
+        product: p,
+        shipment: s,
+        customer: s ? customer(s.customerId) : null,
+        order: link
+          ? {
+              ...link.order,
+              ...orderTotals(link.order),
+              effective_stage: orderStage(link.order),
+            }
+          : null,
+        lot: data.lots.find((x) => x.id === p.lotId),
+        service: repairs.slice((pg - 1) * 20, pg * 20),
+        service_page: pg,
+        service_total: repairs.length,
+        files_enabled: false,
+      };
+    }
+    if (
+      request !== detailRequest ||
+      generation !== authGeneration ||
+      detailProductId !== id
+    )
+      return;
+    renderProductDetail(result);
+    $("#edit-detail-product").disabled = false;
+    const wasHidden = $("#product-file-section").hidden;
+    $("#product-file-section").hidden = !result.files_enabled;
+    if (result.files_enabled && wasHidden) await loadProductFiles();
+    else if (!result.files_enabled)
+      $("#product-detail-content").insertAdjacentHTML(
+        "beforeend",
+        "<section><h3>첨부파일</h3><p>" +
+          (cloudMode
+            ? "첨부파일 DB 업데이트가 필요합니다. 관리자에게 최신 SQL 적용을 요청하세요."
+            : "첨부파일은 클라우드 로그인 후 사용할 수 있습니다.") +
+          "</p></section>",
+      );
+  } catch (error) {
+    if (
+      request !== detailRequest ||
+      generation !== authGeneration ||
+      detailProductId !== id
+    )
+      return;
+    $("#product-detail-content").innerHTML =
+      `<p role="alert">${esc(error.message)}</p><button type="button" class="secondary" id="retry-product-detail">다시 불러오기</button>`;
+  }
+}
+function setProductFilesBusy(value) {
+  fileMutation = value;
+  $("#close-product-detail").disabled = value;
+  $("#edit-detail-product").disabled = value;
+  for (const id of [
+    "product-file-input",
+    "upload-product-files",
+    "refresh-product-files",
+  ])
+    $("#" + id).disabled = value;
+  $("#product-file-list")
+    .querySelectorAll("button")
+    .forEach((b) => (b.disabled = value));
+  $("#previous-product-files").disabled = value || detailFilePage === 1;
+  $("#next-product-files").disabled =
+    value || detailFilePage * 20 >= detailFileTotal;
+}
+async function loadProductFiles() {
+  const id = detailProductId,
+    request = ++fileListRequest,
+    generation = authGeneration;
+  $("#product-file-error").textContent = "";
+  $("#previous-product-files").disabled = true;
+  $("#next-product-files").disabled = true;
+  $("#product-files-page").textContent = "불러오는 중…";
+  try {
+    const result = await cloud.productFiles(id, detailFilePage);
+    if (
+      request !== fileListRequest ||
+      generation !== authGeneration ||
+      id !== detailProductId
+    )
+      return;
+    detailFiles = result.files;
+    detailFilePage = result.page;
+    detailFileTotal = result.total;
+    $("#product-file-list").innerHTML = result.files.length
+      ? '<ul class="product-files">' +
+        result.files
+          .map(
+            (f, i) =>
+              `<li><div><strong>${esc(f.name)}</strong><small>${(Number(f.size || 0) / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} KB · ${esc(f.created_at?.slice(0, 10))}</small></div><button type="button" class="secondary" data-file-download="${i}">다운로드</button>${role === "admin" ? `<button type="button" class="danger" data-file-delete="${i}">삭제</button>` : ""}</li>`,
+          )
+          .join("") +
+        "</ul>"
+      : "<p>첨부파일이 없습니다.</p>";
+    $("#product-files-page").textContent =
+      `${detailFilePage} / ${Math.max(1, Math.ceil(result.total / 20))} 페이지 · ${result.total}개`;
+    setProductFilesBusy(fileMutation);
+  } catch (error) {
+    if (
+      request !== fileListRequest ||
+      generation !== authGeneration ||
+      id !== detailProductId
+    )
+      return;
+    $("#product-file-list").innerHTML = "";
+    detailFiles = [];
+    $("#product-files-page").textContent = "조회 실패";
+    $("#product-file-error").textContent = error.message;
+  }
+}
+$("#close-product-detail").onclick = () => {
+  if (!fileMutation) closeProductDetail();
+};
+$("#product-detail").addEventListener("cancel", (e) => {
+  e.preventDefault();
+  if (!fileMutation) closeProductDetail();
+});
+$("#product-detail-content").addEventListener("click", (e) => {
+  const button = e.target.closest("[data-service-page]");
+  if (button) {
+    $("#product-detail-content")
+      .querySelectorAll("[data-service-page]")
+      .forEach((b) => (b.disabled = true));
+    loadProductDetail(Number(button.dataset.servicePage));
+  }
+  if (e.target.closest("#retry-product-detail")) loadProductDetail(1);
+});
+$("#edit-detail-product").onclick = () => {
+  if (fileMutation) return;
+  const id = detailProductId;
+  closeProductDetail();
+  openEditor(id);
+};
+$("#previous-product-files").onclick = () => {
+  detailFilePage--;
+  loadProductFiles();
+};
+$("#next-product-files").onclick = () => {
+  detailFilePage++;
+  loadProductFiles();
+};
+$("#refresh-product-files").onclick = () => loadProductFiles();
+$("#upload-product-files").onclick = async () => {
+  if (fileMutation) return;
+  const id = detailProductId,
+    generation = authGeneration,
+    files = [...$("#product-file-input").files];
+  if (!files.length) {
+    $("#product-file-error").textContent = "첨부할 파일을 선택하세요.";
+    return;
+  }
+  setProductFilesBusy(true);
+  $("#product-file-error").textContent = "";
+  let completed = 0;
+  const failures = [];
+  try {
+    for (const file of files) {
+      if (generation !== authGeneration || id !== detailProductId) return;
+      $("#product-file-status").textContent =
+        `첨부 중… ${completed + failures.length + 1} / ${files.length}`;
+      try {
+        await cloud.uploadProductFile(id, file);
+        completed++;
+      } catch (error) {
+        failures.push(`${file.name}: ${error.message}`);
+      }
+    }
+    if (generation !== authGeneration || id !== detailProductId) return;
+    $("#product-file-input").value = "";
+    detailFilePage = 1;
+    await loadProductFiles();
+    $("#product-file-status").textContent = `${completed}개 첨부 완료`;
+    if (failures.length)
+      $("#product-file-error").textContent =
+        failures.join("\n") +
+        "\n목록을 확인한 뒤 실패한 파일만 다시 선택하세요.";
+  } finally {
+    setProductFilesBusy(false);
+  }
+};
+$("#product-file-list").addEventListener("click", async (e) => {
+  const button = e.target.closest("[data-file-download],[data-file-delete]");
+  if (!button || fileMutation) return;
+  const deleting = button.hasAttribute("data-file-delete"),
+    file =
+      detailFiles[
+        Number(
+          deleting ? button.dataset.fileDelete : button.dataset.fileDownload,
+        )
+      ];
+  if (!file) return;
+  if (
+    deleting &&
+    !confirm(`${file.name} 파일을 삭제할까요? 복구할 수 없습니다.`)
+  )
+    return;
+  const id = detailProductId,
+    generation = authGeneration;
+  setProductFilesBusy(true);
+  $("#product-file-error").textContent = "";
+  try {
+    if (deleting) {
+      await cloud.deleteProductFile(file.path);
+      if (generation === authGeneration && id === detailProductId) {
+        await loadProductFiles();
+        $("#product-file-status").textContent = "파일을 삭제했습니다.";
+      }
+    } else {
+      $("#product-file-status").textContent = "다운로드 준비 중…";
+      const blob = await cloud.downloadProductFile(file.path);
+      if (generation !== authGeneration || id !== detailProductId) return;
+      const url = URL.createObjectURL(blob),
+        link = document.createElement("a");
+      link.href = url;
+      link.download = file.name;
+      link.click();
+      $("#product-file-status").textContent = "다운로드를 시작했습니다.";
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  } catch (error) {
+    if (generation === authGeneration && id === detailProductId)
+      $("#product-file-error").textContent = error.message;
+  } finally {
+    setProductFilesBusy(false);
+  }
+});

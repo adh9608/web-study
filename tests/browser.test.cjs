@@ -14,6 +14,17 @@ const { chromium } = require("playwright");
       "utf8",
     ),
   );
+  await require("./storage-fixture.cjs")(db);
+  await db.exec(
+    fs.readFileSync(
+      require("node:path").join(
+        __dirname,
+        "../supabase/migrations/20261102_product_details_files.sql",
+      ),
+      "utf8",
+    ),
+  );
+  const storedFiles = new Map();
   const ids = {
     admin: "10000000-0000-4000-8000-000000000001",
     employee: "10000000-0000-4000-8000-000000000002",
@@ -47,7 +58,9 @@ const { chromium } = require("playwright");
     await c.route("https://test-project.supabase.co/**", async (route) => {
       const r = route.request(),
         path = new URL(r.url()).pathname,
-        body = r.postDataJSON() || {};
+        body = r.headers()["content-type"]?.includes("application/json")
+          ? r.postDataJSON() || {}
+          : {};
       if (networkFailure) return route.abort("failed");
       if (path === "/auth/v1/token") {
         const name = body.email?.split("@")[0] || body.refresh_token;
@@ -80,6 +93,71 @@ const { chromium } = require("playwright");
           ids[token],
         ]);
         try {
+          if (path.startsWith("/storage/v1/")) {
+            const uploadPrefix = "/storage/v1/object/product-files/",
+              downloadPrefix =
+                "/storage/v1/object/authenticated/product-files/";
+            if (r.method() === "POST" && path.startsWith(uploadPrefix)) {
+              const objectName = decodeURIComponent(
+                  path.slice(uploadPrefix.length),
+                ),
+                bytes = r.postDataBuffer(),
+                mime = r.headers()["content-type"];
+              if (
+                !bytes?.length ||
+                bytes.length > 10485760 ||
+                ![
+                  "application/pdf",
+                  "image/jpeg",
+                  "image/png",
+                  "image/webp",
+                ].includes(mime)
+              )
+                throw Error("Invalid file size or mime");
+              await db.query(
+                "insert into storage.objects(bucket_id,name,metadata,user_metadata)values('product-files',$1,$2::jsonb,$3::jsonb)",
+                [
+                  objectName,
+                  JSON.stringify({ size: bytes.length, mimetype: mime }),
+                  r.headers()["x-metadata"]
+                    ? Buffer.from(r.headers()["x-metadata"], "base64").toString(
+                        "utf8",
+                      )
+                    : null,
+                ],
+              );
+              storedFiles.set(objectName, bytes);
+              response = { json: { Key: objectName } };
+            } else if (
+              r.method() === "GET" &&
+              path.startsWith(downloadPrefix)
+            ) {
+              const objectName = decodeURIComponent(
+                path.slice(downloadPrefix.length),
+              );
+              const rows = await db.query(
+                "select metadata from storage.objects where bucket_id='product-files' and name=$1",
+                [objectName],
+              );
+              response = rows.rows.length
+                ? {
+                    body: storedFiles.get(objectName),
+                    contentType: rows.rows[0].metadata.mimetype,
+                  }
+                : { status: 404, json: { message: "not found" } };
+            } else if (
+              r.method() === "DELETE" &&
+              path === "/storage/v1/object/product-files"
+            ) {
+              const rows = await db.query(
+                "delete from storage.objects where bucket_id='product-files' and name=any($1::text[]) returning name",
+                [body.prefixes],
+              );
+              for (const row of rows.rows) storedFiles.delete(row.name);
+              response = { json: rows.rows };
+            } else throw Error("Unexpected Storage endpoint");
+            return;
+          }
           let result;
           if (path.endsWith("flow_summary"))
             result = await db.query("select flow_summary() as result");
@@ -97,6 +175,16 @@ const { chromium } = require("playwright");
                 body.p_current || null,
                 body.p_lot || null,
               ],
+            );
+          else if (path.endsWith("flow_product_detail"))
+            result = await db.query(
+              "select flow_product_detail($1::uuid,$2) result",
+              [body.p_id, body.p_service_page || 1],
+            );
+          else if (path.endsWith("flow_product_files"))
+            result = await db.query(
+              "select flow_product_files($1::uuid,$2) result",
+              [body.p_id, body.p_page || 1],
             );
           else if (path.endsWith("flow_write"))
             result = await db.query(
@@ -1116,11 +1204,127 @@ const { chromium } = require("playwright");
     .click();
   assert.ok(await mp.locator("[name=customerId]").inputValue());
   await mp.locator("#cancel-dialog").click();
+  const linkedProduct = (
+    await db.query(
+      `select p.serial,c.name customer_name,o.number from products p join shipments s on s."productId"=p.id join customers c on c.id=s."customerId" join order_items i on i.id=s."orderItemId" join orders o on o.id=i."orderId" limit 1`,
+    )
+  ).rows[0];
+  async function openDetail(p, serial) {
+    await nav(p, "제품관리");
+    await p.locator("#search").fill(serial);
+    await p.waitForFunction(
+      () =>
+        document.querySelector("#table-body").getAttribute("aria-busy") ===
+        "false",
+    );
+    await p.locator("[data-product-detail]").click();
+    await p.locator("#product-detail").waitFor({ state: "visible" });
+    await p.locator("#product-detail-content h3").first().waitFor();
+    await p
+      .locator("#product-files-page")
+      .filter({ hasText: "페이지" })
+      .waitFor();
+  }
+  await openDetail(mp, linkedProduct.serial);
+  assert.match(
+    await mp.locator("#product-detail-content").innerText(),
+    new RegExp(linkedProduct.customer_name),
+  );
+  assert.match(
+    await mp.locator("#product-detail-content").innerText(),
+    new RegExp(linkedProduct.number),
+  );
+  const pdfBytes = Buffer.from("%PDF-1.4\nattachment test\n%%EOF");
+  await mp.locator("#product-file-input").setInputFiles({
+    name: "검사 성적서.pdf",
+    mimeType: "application/pdf",
+    buffer: pdfBytes,
+  });
+  await mp.locator("#upload-product-files").click();
+  await mp
+    .locator("#product-file-status")
+    .filter({ hasText: "1개 첨부 완료" })
+    .waitFor();
+  assert.match(
+    await mp.locator("#product-file-list").innerText(),
+    /검사 성적서.pdf/,
+  );
+  const [fileDownload] = await Promise.all([
+    mp.waitForEvent("download"),
+    mp.locator("[data-file-download]").click(),
+  ]);
+  assert.deepEqual(fs.readFileSync(await fileDownload.path()), pdfBytes);
+  await mp.locator("#product-file-input").setInputFiles({
+    name: "실행.exe",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from("not allowed"),
+  });
+  await mp.locator("#upload-product-files").click();
+  await mp
+    .locator("#product-file-error")
+    .filter({ hasText: "사진 또는 PDF" })
+    .waitFor();
+  await mp.locator("#product-file-input").setInputFiles({
+    name: "큰 파일.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.alloc(10485761),
+  });
+  await mp.locator("#upload-product-files").click();
+  await mp.locator("#product-file-error").filter({ hasText: "10MB" }).waitFor();
+  assert.equal(await mp.locator("[data-file-download]").count(), 1);
+  const fileEmployeeContext = await context(),
+    fileEmployee = await fileEmployeeContext.newPage();
+  await login(fileEmployee, "employee");
+  await openDetail(fileEmployee, linkedProduct.serial);
+  assert.equal(await fileEmployee.locator("[data-file-delete]").count(), 0);
+  await fileEmployee.locator("#product-file-input").setInputFiles({
+    name: "직원 첨부.pdf",
+    mimeType: "application/pdf",
+    buffer: pdfBytes,
+  });
+  await fileEmployee.locator("#upload-product-files").click();
+  await fileEmployee
+    .locator("#product-file-status")
+    .filter({ hasText: "1개 첨부 완료" })
+    .waitFor();
+  assert.equal(await fileEmployee.locator("[data-file-download]").count(), 2);
+  await fileEmployee.locator("#close-product-detail").click();
+  await mp.locator("#refresh-product-files").click();
+  await mp.waitForFunction(
+    () => document.querySelectorAll("[data-file-delete]").length === 2,
+  );
+  mp.once("dialog", (d) => d.accept());
+  await mp.locator("[data-file-delete]").first().click();
+  await mp
+    .locator("#product-file-status")
+    .filter({ hasText: "파일을 삭제했습니다" })
+    .waitFor();
+  assert.equal(await mp.locator("[data-file-download]").count(), 1);
+  await mp.setViewportSize({ width: 375, height: 812 });
+  assert.equal(
+    await mp
+      .locator("#product-detail")
+      .evaluate((e) => e.scrollWidth <= e.clientWidth),
+    true,
+  );
+  await mp.screenshot({
+    path: "test-results/product-detail-mobile.png",
+    fullPage: true,
+  });
+  await mp.locator("#close-product-detail").click();
+  await mp.locator("[data-edit]").click();
+  await mp.locator("#editor").waitFor({ state: "visible" });
+  await mp.locator("#editor-product-detail").click();
+  await mp.locator("#product-detail").waitFor({ state: "visible" });
+  assert.equal(await mp.locator("#edit-detail-product").isHidden(), true);
+  await mp.locator("#close-product-detail").click();
+  assert.equal(await mp.locator("#editor").isVisible(), true);
+  await mp.locator("#cancel-dialog").click();
   assert.deepEqual(errors, []);
   await b.close();
   await db.close();
   console.log(
-    "PASS: Browser login/logout, two users sharing PostgreSQL records, employee role UI, conflict handling, shipments, A/S completion, session reload/refresh, network errors, nonstaff/wrong-password rejection mobile layout, bounded DB requests, pagination, full CSV export, late-response protection and remote selection. Auth transport simulated locally; real Supabase not verified.",
+    "PASS: Browser login/logout, two users sharing PostgreSQL records, employee role UI, conflict handling, shipments, A/S completion, session reload/refresh, network errors, nonstaff/wrong-password rejection mobile layout, bounded DB requests, pagination, full CSV export, late-response protection, remote selection, linked product details and private file upload/download/admin deletion. Auth transport simulated locally; real Supabase not verified.",
   );
 })().catch((e) => {
   console.error(e);

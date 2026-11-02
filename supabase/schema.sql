@@ -647,4 +647,29 @@ create index if not exists flow_customers_name_page on public.customers(name,id)
 create index if not exists flow_shipments_date_page on public.shipments(date desc nulls last,id);
 create index if not exists flow_service_received_page on public.service(received desc,id);
 
+-- Product detail fetches one product and its real relationships, not the whole database.
+create or replace function public.flow_product_detail(p_id uuid,p_service_page integer default 1) returns jsonb
+language plpgsql stable security definer set search_path=pg_catalog,public as $$
+declare p jsonb; s jsonb; o jsonb; c jsonb; l jsonb; repairs jsonb; n bigint; pg integer;
+begin
+ if public.flow_role() is null then raise exception 'STAFF_REQUIRED' using errcode='42501'; end if;
+ select record into p from public.flow_read_rows('products') where id=p_id;
+ if p is null then raise exception 'PRODUCT_NOT_FOUND'; end if;
+ select to_jsonb(x) into s from public.flow_shipments_read x where x."productId"=p_id;
+ if s is not null then
+  select to_jsonb(x) into c from public.customers x where x.id=(s->>'customerId')::uuid;
+  select to_jsonb(x) into o from public.flow_orders_read x join public.order_items i on i."orderId"=x.id where i.id=(s->>'orderItemId')::uuid;
+ end if;
+ select to_jsonb(x) into l from public.flow_lots_read x where x.id=(p->>'lotId')::uuid;
+ select count(*) into n from public.service where "productId"=p_id;
+ pg:=least(greatest(coalesce(p_service_page,1),1),greatest(1,ceil(n::numeric/20)::integer));
+ select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) into repairs from (
+  select * from public.flow_service_read where "productId"=p_id order by received desc,id limit 20 offset (pg-1)*20
+ ) x;
+ return jsonb_build_object('product',p,'customer',c,'shipment',s,'order',o,'lot',l,'service',repairs,'service_total',n,'service_page',pg,'role',public.flow_role(),'files_enabled',to_regprocedure('public.flow_product_files(uuid,integer)') is not null);
+end $$;
+revoke all on function public.flow_product_detail(uuid,integer) from public,anon;
+grant execute on function public.flow_product_detail(uuid,integer) to authenticated;
+
+-- To enable private product attachments, also run migrations/20261102_product_details_files.sql.
 commit;
