@@ -1120,6 +1120,8 @@ dialog::backdrop {
   text-decoration: underline;
   text-underline-offset: 3px;
   text-align: left;
+  border: none;
+  box-shadow: none;
 }
 [data-product-row] {
   cursor: pointer;
